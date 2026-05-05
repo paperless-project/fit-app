@@ -1,0 +1,29 @@
+# Ajustes para desarrollo: hot-reload y volumenes montados.
+# Compose carga este fichero automaticamente cuando esta presente.
+
+services:
+  api:
+    command: uvicorn fitapp.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./apps/api:/app
+      - /workspace/xabi/Activities:/activities:ro
+      # Conserva el venv del contenedor para que las dependencias no se machaquen
+      - api_venv:/app/.venv
+
+  web:
+    command: pnpm run dev --host
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+
+volumes:
+  api_venv:
+  web_node_modules:

@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fitapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fitapp}
+      POSTGRES_DB: ${POSTGRES_DB:-fitapp}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fitapp} -d ${POSTGRES_DB:-fitapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fitapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fitapp}
+      POSTGRES_DB: ${POSTGRES_DB:-fitapp}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      JWT_LIFETIME_SECONDS: ${JWT_LIFETIME_SECONDS:-3600}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      ACTIVITIES_DIR: ${ACTIVITIES_DIR:-/activities}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Carpeta con los .fit originales (read-only)
+      - /workspace/xabi/Activities:/activities:ro
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+
+volumes:
+  db_data:
