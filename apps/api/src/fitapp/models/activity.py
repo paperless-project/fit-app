@@ -48,8 +48,8 @@ class Activity(Base):
     avg_power: Mapped[int | None] = mapped_column(Integer)
     calories: Mapped[int | None] = mapped_column(Integer)
 
-    start_point = mapped_column(Geography(geometry_type="POINT", srid=4326))
-    bbox = mapped_column(Geography(geometry_type="POLYGON", srid=4326))
+    start_point = mapped_column(Geography(geometry_type="POINT", srid=4326, spatial_index=False))
+    bbox = mapped_column(Geography(geometry_type="POLYGON", srid=4326, spatial_index=False))
     summary: Mapped[dict | None] = mapped_column(JSONB)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
@@ -72,7 +72,7 @@ class Record(Base):
     )
     ts: Mapped[datetime] = mapped_column(primary_key=True)
 
-    position = mapped_column(Geography(geometry_type="POINT", srid=4326))
+    position = mapped_column(Geography(geometry_type="POINT", srid=4326, spatial_index=False))
     altitude_m: Mapped[Decimal | None] = mapped_column(Numeric(7, 2))
     distance_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     speed_mps: Mapped[Decimal | None] = mapped_column(Numeric(6, 3))

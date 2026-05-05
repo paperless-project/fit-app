@@ -3,21 +3,22 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
 # uv: gestor de dependencias rapido
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
-# Instala dependencias primero para aprovechar la cache de Docker
+# Instala dependencias en /opt/venv para que no quede bajo /app
+# y no sea sobreescrito por el volumen de desarrollo
 COPY pyproject.toml ./
-RUN uv venv && uv pip install -e ".[dev]"
+RUN uv venv /opt/venv && uv pip install --python /opt/venv -e ".[dev]"
 
 # Copia el resto del codigo
 COPY . .
-
-ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 

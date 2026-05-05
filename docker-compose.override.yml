@@ -7,8 +7,9 @@ services:
     volumes:
       - ./apps/api:/app
       - /workspace/xabi/Activities:/activities:ro
-      # Conserva el venv del contenedor para que las dependencias no se machaquen
-      - api_venv:/app/.venv
+      # El venv vive en /opt/venv (fuera de /app) para que el volumen de codigo
+      # no lo sobreescriba — se rellena la primera vez desde la imagen construida
+      - api_venv:/opt/venv
 
   web:
     command: pnpm run dev --host

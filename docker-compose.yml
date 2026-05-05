@@ -34,6 +34,7 @@ services:
       JWT_LIFETIME_SECONDS: ${JWT_LIFETIME_SECONDS:-3600}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       ACTIVITIES_DIR: ${ACTIVITIES_DIR:-/activities}
+      PYTHONPATH: /app/src
     ports:
       - "8000:8000"
     volumes:
