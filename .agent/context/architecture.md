@@ -4,12 +4,12 @@
 ```
 fit-app/
 ├── apps/api/          Python/FastAPI — src/fitapp/{auth,models,routers,services,schemas}
-├── apps/web/          React/Vite — src/{components,pages,hooks,lib,types}
-├── scripts/           bulk_import.py (CLI importación masiva)
+├── apps/web/          React/Vite — src/{components,pages,lib,store,types}
+├── scripts/           bulk_import.py (CLI importación masiva, pendiente)
 └── doc/PLAN.md        Plan completo con fases, esquema BD, endpoints
 ```
 
-## Flujo de datos
+## Flujo de datos (Fase 2 — pendiente)
 ```
 .fit file → POST /activities/upload (multipart)
          → fit_parser.parse_fit() → ParsedFit dataclass
@@ -17,10 +17,20 @@ fit-app/
          → GET /activities/{id}/records → frontend → Chart.js + Leaflet
 ```
 
+## Flujo de auth + verificación
+```
+POST /auth/register → UserManager.on_after_register
+                    → request_verify() → on_after_request_verify
+                    → send_verification_email() → SMTP → Mailpit (dev)
+                    
+usuario pincha enlace → /verify?token=TOKEN (frontend)
+                      → POST /auth/verify (backend) → is_verified=True
+```
+
 ## Multi-tenant
-- Tabla `users` (fastapi-users UUID PK)
+- Tabla `users` (fastapi-users, UUID PK)
 - Todos los recursos tienen `user_id FK → users(id) ON DELETE CASCADE`
-- `UNIQUE(user_id, file_hash)` en `activities` — mismo fichero puede pertenecer a distintos usuarios
+- `UNIQUE(user_id, file_hash)` en `activities` — mismo fichero puede ser de distintos usuarios
 - Endpoints filtran siempre por `current_active_user` del JWT
 
 ## Decisiones irreversibles
@@ -29,3 +39,4 @@ fit-app/
 - `fastapi-users` para auth (no JWT manual)
 - `uv` como gestor de paquetes Python
 - `pnpm` como gestor JS
+- Verificación de email obligatoria al registrarse

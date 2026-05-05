@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncGenerator
 
 from fastapi import Depends
-from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
+from fastapi_users import BaseUserManager, FastAPIUsers, InvalidPasswordException, UUIDIDMixin
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fitapp.config import settings
 from fitapp.db import get_session
 from fitapp.models.user import User
+from fitapp.services.email import send_verification_email
 
 
 async def get_user_db(
@@ -28,6 +29,16 @@ async def get_user_db(
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = settings.jwt_secret
     verification_token_secret = settings.jwt_secret
+
+    async def validate_password(self, password: str, user) -> None:  # type: ignore[override]
+        if len(password) < 8:
+            raise InvalidPasswordException(reason="REGISTER_INVALID_PASSWORD")
+
+    async def on_after_register(self, user: User, request=None) -> None:
+        await self.request_verify(user, request)
+
+    async def on_after_request_verify(self, user: User, token: str, request=None) -> None:
+        await send_verification_email(user.email, token)
 
 
 async def get_user_manager(

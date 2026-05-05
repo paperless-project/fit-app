@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="change-me", min_length=8)
     jwt_lifetime_seconds: int = 3600
 
+    smtp_host: str = ""
+    smtp_port: int = 1025
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@fit-app.local"
+    smtp_starttls: bool = False
+
+    frontend_url: str = "http://localhost:5173"
+
     cors_origins: str = "http://localhost:5173"
     activities_dir: str = "/activities"
 

@@ -39,6 +39,19 @@ export async function getMeApi(token: string): Promise<UserRead> {
   return res.json() as Promise<UserRead>;
 }
 
+export async function verifyEmailApi(token: string): Promise<UserRead> {
+  const res = await fetch(`${BASE_URL}/auth/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(text || res.statusText, res.status);
+  }
+  return res.json() as Promise<UserRead>;
+}
+
 export async function logoutApi(token: string): Promise<void> {
   await fetch(`${BASE_URL}/auth/jwt/logout`, {
     method: 'POST',

@@ -6,6 +6,7 @@ import Layout from '@/components/Layout';
 import PrivateRoute from '@/components/PrivateRoute';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
+import VerifyPage from '@/pages/VerifyPage';
 import ActivitiesPage from '@/pages/ActivitiesPage';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
       {/* Rutas públicas */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/verify" element={<VerifyPage />} />
 
       {/* Rutas privadas */}
       <Route element={<PrivateRoute />}>
