@@ -19,7 +19,7 @@ from sqlalchemy import select
 from fitapp.db import SessionLocal
 from fitapp.models.user import User
 from fitapp.services.activity_service import persist_activity
-from fitapp.services.fit_parser import parse_fit
+from fitapp.services.fit_parser import parse_fit_safe
 
 
 async def import_folder(user_email: str, folder: Path) -> None:
@@ -44,16 +44,19 @@ async def import_folder(user_email: str, folder: Path) -> None:
 
         for i, path in enumerate(fit_files, 1):
             try:
-                parsed = parse_fit(path)
+                parsed, repaired = await asyncio.to_thread(parse_fit_safe, path)
                 _, is_dup = await persist_activity(db, user.id, parsed)
                 if is_dup:
-                    print(f"  [{i:3d}/{len(fit_files)}] SKIP {path.name} (duplicado)")
+                    print(f"  [{i:3d}/{len(fit_files)}] SKIP     {path.name} (duplicado)")
                     skipped += 1
+                elif repaired:
+                    print(f"  [{i:3d}/{len(fit_files)}] REPARADO {path.name}  {parsed.distance_m or 0:.0f}m")
+                    imported += 1
                 else:
-                    print(f"  [{i:3d}/{len(fit_files)}] OK   {path.name}  {parsed.distance_m or 0:.0f}m")
+                    print(f"  [{i:3d}/{len(fit_files)}] OK       {path.name}  {parsed.distance_m or 0:.0f}m")
                     imported += 1
             except Exception as exc:
-                print(f"  [{i:3d}/{len(fit_files)}] ERR  {path.name}: {exc}", file=sys.stderr)
+                print(f"  [{i:3d}/{len(fit_files)}] ERR      {path.name}: {exc}", file=sys.stderr)
                 errors += 1
 
     print(f"\nResumen: {imported} importadas, {skipped} omitidas, {errors} errores.")

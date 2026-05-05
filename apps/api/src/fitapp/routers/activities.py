@@ -14,7 +14,7 @@ from fitapp.models.activity import Activity
 from fitapp.models.user import User
 from fitapp.schemas.activity import ActivityOut
 from fitapp.services.activity_service import persist_activity
-from fitapp.services.fit_parser import parse_fit
+from fitapp.services.fit_parser import parse_fit_safe
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 
@@ -45,7 +45,7 @@ async def upload_activity(
         tmp_path = Path(tmp.name)
 
     try:
-        parsed = parse_fit(tmp_path)
+        parsed, repaired = parse_fit_safe(tmp_path)
         parsed.file_name = file.filename or tmp_path.name
     except Exception:
         raise HTTPException(status_code=400, detail="INVALID_FIT_FILE")

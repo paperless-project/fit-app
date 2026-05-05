@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -158,3 +159,41 @@ def parse_fit(path: Path) -> ParsedFit:
         records=records,
         laps=laps,
     )
+
+
+def parse_fit_safe(path: Path) -> tuple[ParsedFit, bool]:
+    """
+    Parsea un fichero FIT. Si falla, intenta repararlo antes de volver a parsear.
+
+    Devuelve (ParsedFit, was_repaired).
+    El file_hash siempre corresponde al fichero original para que la deduplicacion
+    por (user_id, file_hash) sea coherente independientemente de la reparacion.
+    """
+    from fitapp.services.fit_repair import FitRepairError, repair
+
+    try:
+        return parse_fit(path), False
+    except Exception as original_error:
+        pass
+
+    # Conservar el hash del original antes de reparar
+    original_hash = file_sha256(path)
+    original_name = path.name
+
+    try:
+        repaired_bytes = repair(path)
+    except FitRepairError:
+        raise Exception(f"No se pudo parsear ni reparar {path.name}")
+
+    with tempfile.NamedTemporaryFile(suffix=".fit", delete=False) as tmp:
+        tmp.write(repaired_bytes)
+        tmp_path = Path(tmp.name)
+
+    try:
+        parsed = parse_fit(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    parsed.file_hash = original_hash
+    parsed.file_name = original_name
+    return parsed, True
