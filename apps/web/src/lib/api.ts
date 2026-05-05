@@ -18,6 +18,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
   const response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+
+  if (response.status === 401) {
+    localStorage.removeItem('access_token');
+    // Reload forces the auth guard to redirect to /login
+    window.location.href = '/login';
+    throw new ApiError('Sesión expirada', 401);
+  }
+
   if (!response.ok) {
     const text = await response.text();
     throw new ApiError(text || response.statusText, response.status);
