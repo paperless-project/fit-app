@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ from fitapp.db import get_session
 from fitapp.models.activity import Activity, Lap, Record
 from fitapp.models.user import User
 from fitapp.schemas.activity import ActivityDetailOut, ActivityOut, ActivityPatch, LapOut, RecordOut
-from fitapp.services.activity_service import persist_activity
+from fitapp.services.activity_service import _enrich_name_bg, enrich_activity_name, persist_activity
 from fitapp.services.fit_parser import parse_fit_safe
 
 router = APIRouter(prefix="/activities", tags=["activities"])
@@ -55,6 +55,7 @@ async def list_activities(
 
 @router.post("/upload", response_model=ActivityOut, status_code=201)
 async def upload_activity(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_session),
@@ -77,7 +78,24 @@ async def upload_activity(
     if is_duplicate:
         raise HTTPException(status_code=409, detail="ACTIVITY_ALREADY_EXISTS")
 
+    background_tasks.add_task(_enrich_name_bg, activity.id)
     return activity
+
+
+@router.post("/enrich-names")
+async def trigger_enrich_names(
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_session),
+) -> dict:
+    """Encola geocodificacion de nombre para todas las actividades del usuario con name IS NULL."""
+    result = await db.execute(
+        select(Activity.id).where(Activity.user_id == user.id, Activity.name.is_(None))
+    )
+    ids = [row[0] for row in result.all()]
+    for activity_id in ids:
+        background_tasks.add_task(_enrich_name_bg, activity_id)
+    return {"queued": len(ids)}
 
 
 # IMPORTANTE: /export/csv debe estar registrado antes de /{activity_id}

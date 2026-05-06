@@ -11,8 +11,10 @@ import fitapp.services.geocoding as geo
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_records(n: int = 100) -> list[dict]:
-    """Records con GPS simples para usar en tests."""
-    return [{"lat": 42.8 + i * 0.001, "lon": -8.5 + i * 0.001} for i in range(n)]
+    """Records GPS que forman un bucle (inicio = fin, distancia haversine = 0)."""
+    half = n // 2
+    outward = [{"lat": 42.8 + i * 0.001, "lon": -8.5 + i * 0.001} for i in range(half)]
+    return outward + list(reversed(outward))
 
 
 def _nominatim_response(cls: str, type_: str, name: str, address: dict) -> dict:
@@ -70,7 +72,8 @@ async def test_generate_name_no_gps_returns_none():
 @pytest.mark.asyncio
 async def test_generate_name_only_locality():
     records = _make_records(100)
-    responses = [_village_response("O Milladoiro")] + [None, None, None]
+    # call order: start(zoom13), end(zoom13), frac0.15, frac0.30, frac0.50, frac0.70, frac0.85
+    responses = [_village_response("O Milladoiro"), None, None, None, None, None, None]
 
     with patch("fitapp.services.geocoding._reverse", new_callable=AsyncMock, side_effect=responses):
         name = await geo.generate_activity_name(records)
@@ -82,10 +85,13 @@ async def test_generate_name_only_locality():
 async def test_generate_name_one_poi():
     records = _make_records(100)
     responses = [
-        _village_response("Padrón"),
-        _poi_response("Santuario de la Esclavitud"),
-        None,
-        None,
+        _village_response("Padrón"),          # start zoom=13
+        None,                                  # end zoom=13 (loop → ignored)
+        _poi_response("Santuario de la Esclavitud"),  # frac 0.15
+        None,                                  # frac 0.30
+        None,                                  # frac 0.50
+        None,                                  # frac 0.70
+        None,                                  # frac 0.85
     ]
 
     with patch("fitapp.services.geocoding._reverse", new_callable=AsyncMock, side_effect=responses):
@@ -98,10 +104,13 @@ async def test_generate_name_one_poi():
 async def test_generate_name_two_pois():
     records = _make_records(100)
     responses = [
-        _village_response("O Milladoiro"),
-        _poi_response("Santuario de la Esclavitud"),
-        _poi_response("Monumento a Cela"),
-        None,
+        _village_response("O Milladoiro"),             # start zoom=13
+        None,                                           # end zoom=13 (loop → ignored)
+        _poi_response("Santuario de la Esclavitud"),   # frac 0.15
+        _poi_response("Monumento a Cela"),              # frac 0.30
+        None,                                           # frac 0.50
+        None,                                           # frac 0.70
+        None,                                           # frac 0.85
     ]
 
     with patch("fitapp.services.geocoding._reverse", new_callable=AsyncMock, side_effect=responses):
@@ -114,10 +123,11 @@ async def test_generate_name_two_pois():
 async def test_generate_name_three_pois():
     records = _make_records(100)
     responses = [
-        _village_response("O Milladoiro"),
-        _poi_response("Santuario de la Esclavitud"),
-        _poi_response("Monumento a Cela"),
-        _poi_response("Igrexa de Iria Flavia", cls="historic"),
+        _village_response("O Milladoiro"),                       # start zoom=13
+        None,                                                     # end zoom=13 (loop → ignored)
+        _poi_response("Santuario de la Esclavitud"),             # frac 0.15
+        _poi_response("Monumento a Cela"),                       # frac 0.30
+        _poi_response("Igrexa de Iria Flavia", cls="historic"),  # frac 0.50 → 3 POIs, loop breaks
     ]
 
     with patch("fitapp.services.geocoding._reverse", new_callable=AsyncMock, side_effect=responses):
@@ -133,10 +143,13 @@ async def test_generate_name_deduplicates_pois():
     """Si dos puntos de muestreo devuelven el mismo POI, aparece solo una vez."""
     records = _make_records(100)
     responses = [
-        _village_response("Padrón"),
-        _poi_response("Santuario de la Esclavitud"),
-        _poi_response("Santuario de la Esclavitud"),  # duplicado
-        None,
+        _village_response("Padrón"),                              # start zoom=13
+        None,                                                     # end zoom=13 (loop → ignored)
+        _poi_response("Santuario de la Esclavitud"),              # frac 0.15
+        _poi_response("Santuario de la Esclavitud"),              # frac 0.30 (duplicado)
+        None,                                                     # frac 0.50
+        None,                                                     # frac 0.70
+        None,                                                     # frac 0.85
     ]
 
     with patch("fitapp.services.geocoding._reverse", new_callable=AsyncMock, side_effect=responses):

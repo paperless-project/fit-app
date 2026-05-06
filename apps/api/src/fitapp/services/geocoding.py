@@ -1,7 +1,8 @@
 """Geocodificacion inversa con Nominatim (OpenStreetMap).
 
 Genera nombres de actividad estilo Wikiloc:
-  "Santuario de la Esclavitud, Igrexa de Iria Flavia desde O Milladoiro"
+  Bucle:         "Santuario de la Esclavitud, Igrexa de Iria Flavia desde O Milladoiro"
+  Punto a punto: "De O Milladoiro a Padrón vía Igrexa de Iria Flavia"
 
 Respeta la politica de uso de Nominatim: maximo 1 peticion/segundo,
 User-Agent identificado. Cache en memoria por cuadricula ~1 km.
@@ -9,6 +10,7 @@ User-Agent identificado. Cache en memoria por cuadricula ~1 km.
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any
 
 import httpx
@@ -25,7 +27,20 @@ _last_call: float = 0.0
 # Clases OSM que indican un lugar notable (no simple via o edificio residencial)
 _NOTABLE_CLASSES = frozenset({
     "amenity", "tourism", "historic", "natural", "leisure", "man_made",
+    "mountain_pass", "waterway",
 })
+
+# Radio en km para considerar el recorrido como bucle
+_LOOP_THRESHOLD_KM = 1.5
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distancia haversine en km entre dos puntos GPS."""
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
 
 
 async def _reverse(lat: float, lon: float, zoom: int) -> dict[str, Any] | None:
@@ -75,46 +90,89 @@ def _poi_name(result: dict[str, Any]) -> str | None:
     return None
 
 
+def _join_pois(pois: list[str]) -> str:
+    if len(pois) == 1:
+        return pois[0]
+    if len(pois) == 2:
+        return f"{pois[0]} y {pois[1]}"
+    return f"{', '.join(pois[:-1])} y {pois[-1]}"
+
+
 async def generate_activity_name(records: list[dict[str, Any]]) -> str | None:
     """
-    Genera un nombre estilo Wikiloc a partir de los records GPS de la actividad.
+    Genera un nombre descriptivo a partir de los records GPS de la actividad.
 
-    Toma 4 puntos (inicio + 25% + 50% + 75% de la ruta), llama a Nominatim y
-    construye: "POI1, POI2 y POI3 desde StartLocality".
-    Devuelve None si no hay datos GPS suficientes o si todos los geocodings fallan.
+    Estrategia:
+    - Obtiene la localidad de inicio (zoom 13).
+    - Obtiene la localidad de fin (zoom 13); si es diferente al inicio = punto a punto.
+    - Muestrea hasta 5 waypoints intermedios (fracciones 0.15, 0.3, 0.5, 0.7, 0.85) a zoom 17
+      para identificar POIs notables (amenity, tourism, historic, natural, leisure...).
+    - Nombres resultado:
+        Bucle:         "POI1, POI2 y POI3 desde StartLocality"
+        Punto a punto: "De StartLocality a EndLocality [vía POI1]"
+    Devuelve None si no hay datos GPS suficientes o todos los geocodings fallan.
     """
     gps = [r for r in records if r.get("lat") is not None and r.get("lon") is not None]
     if len(gps) < 2:
         return None
 
-    # Localidad de partida a zoom bajo (nivel pueblo/ciudad)
+    n = len(gps)
+
+    # ── 1. Localidad de inicio ────────────────────────────────────────────────
     start_result = await _reverse(gps[0]["lat"], gps[0]["lon"], zoom=13)
     start_locality = _locality(start_result.get("address", {})) if start_result else None
 
-    # Puntos intermedios para buscar POIs notables
-    n = len(gps)
-    pois: list[str] = []
-    seen: set[str] = {start_locality} if start_locality else set()
+    # ── 2. Localidad de fin (usando el 95% de la ruta para evitar el inicio) ──
+    end_idx = max(1, int(n * 0.95))
+    end_result = await _reverse(gps[end_idx]["lat"], gps[end_idx]["lon"], zoom=13)
+    end_locality = _locality(end_result.get("address", {})) if end_result else None
 
-    for frac in (0.25, 0.5, 0.75):
-        pt = gps[int(n * frac)]
-        result = await _reverse(pt["lat"], pt["lon"], zoom=17)
+    # ── 3. ¿Es bucle? ────────────────────────────────────────────────────────
+    dist_km = _haversine_km(
+        gps[0]["lat"], gps[0]["lon"],
+        gps[-1]["lat"], gps[-1]["lon"],
+    )
+    is_loop = dist_km <= _LOOP_THRESHOLD_KM or start_locality == end_locality
+
+    # ── 4. POIs intermedios ──────────────────────────────────────────────────
+    pois: list[str] = []
+    seen: set[str] = set()
+    if start_locality:
+        seen.add(start_locality.lower())
+    if end_locality and not is_loop:
+        seen.add(end_locality.lower())
+
+    for frac in (0.15, 0.30, 0.50, 0.70, 0.85):
+        if len(pois) >= 3:
+            break
+        idx = int(n * frac)
+        result = await _reverse(gps[idx]["lat"], gps[idx]["lon"], zoom=17)
         if result:
             name = _poi_name(result)
-            if name and name not in seen:
+            if name and name.lower() not in seen:
                 pois.append(name)
-                seen.add(name)
+                seen.add(name.lower())
 
-    if not pois and not start_locality:
+    # ── 5. Construir nombre ───────────────────────────────────────────────────
+    if is_loop:
+        if pois and start_locality:
+            return f"{_join_pois(pois)} desde {start_locality}"
+        if pois:
+            return _join_pois(pois)
+        if start_locality:
+            return f"Desde {start_locality}"
         return None
-
-    if pois:
-        if len(pois) == 1:
-            poi_str = pois[0]
-        elif len(pois) == 2:
-            poi_str = f"{pois[0]} y {pois[1]}"
+    else:
+        # Punto a punto
+        if start_locality and end_locality and start_locality != end_locality:
+            base = f"De {start_locality} a {end_locality}"
+        elif start_locality:
+            base = f"Desde {start_locality}"
+        elif end_locality:
+            base = f"Hasta {end_locality}"
         else:
-            poi_str = f"{', '.join(pois[:-1])} y {pois[-1]}"
-        return f"{poi_str} desde {start_locality}" if start_locality else poi_str
+            base = None
 
-    return f"Desde {start_locality}"
+        if pois and base:
+            return f"{base} vía {_join_pois(pois[:1])}"
+        return base

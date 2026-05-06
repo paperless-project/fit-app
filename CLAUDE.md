@@ -100,6 +100,17 @@ Auth completa (register + verify email + login/logout + `/users/me`). Frontend: 
 
 **Tests: 109 pasando.**
 
+### Fase 7 — Completa ✅ — Job asíncrono de enriquecimiento de nombres
+- **`geocoding.py` mejorado**: detecta bucle vs. punto a punto (haversine); muestrea inicio + fin + hasta 5 waypoints intermedios (fracciones 0.15/0.30/0.50/0.70/0.85 de la ruta); nombres: "POI1, POI2 y POI3 desde Locality" o "De StartLocality a EndLocality vía POI".
+- **`enrich_activity_name(db, activity_id, force=False)`**: carga records de la BD, llama a `generate_activity_name`, actualiza `name` si devuelve algo.
+- **`_enrich_name_bg(activity_id)`**: tarea de fondo con sesión propia; se encola con `BackgroundTasks` en cada upload.
+- **`persist_activity()`**: ya no hace geocoding inline; el upload responde al instante.
+- **`POST /activities/enrich-names`**: encola geocoding para todas las actividades del usuario con `name IS NULL`; devuelve `{"queued": N}`.
+- **`enrich_names.py`** (CLI): `python enrich_names.py --user-email EMAIL` o `--all-users [--force]` para enriquecer las 114 actividades importadas en bulk.
+- **Tests**: mock de `_enrich_name_bg` en conftest (target correcto: `fitapp.routers.activities`); fixture `enrich_via_test_db` para verificar el resultado end-to-end.
+
+**Tests: 119 pasando.**
+
 ### Mejoras conocidas / bugs
 - Los nombres de actividad de las 114 actividades importadas en bulk son `NULL` (el geocoding en bulk_import tarda mucho por el rate-limit de Nominatim; considerar job asíncrono o comando separado de "enriquecer nombres").
 - `apps/api/bulk_import.py` es un fichero huérfano (copia temporal usada para ejecutar en el contenedor); ignorar o borrar.

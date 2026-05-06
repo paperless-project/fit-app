@@ -70,6 +70,18 @@ def mock_geocoding():
         yield mock
 
 
+# ── Mock de tarea de fondo de enriquecimiento (evita sesion propia en tests) ─
+# Se parchea donde se USA (el router importa _enrich_name_bg por nombre directo),
+# no donde está definida, para que background_tasks.add_task reciba el mock.
+@pytest.fixture(autouse=True)
+def mock_enrich_bg():
+    with patch(
+        "fitapp.routers.activities._enrich_name_bg",
+        new_callable=AsyncMock,
+    ) as mock:
+        yield mock
+
+
 # ── Limpieza de tablas entre tests ─────────────────────────────────────────
 @pytest_asyncio.fixture(autouse=True)
 async def _clean_tables() -> AsyncGenerator[None, None]:
