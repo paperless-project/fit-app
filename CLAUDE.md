@@ -53,7 +53,7 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 
 ---
 
-## Estado actual (2026-05-06) — Fase 7 completa — 119 tests
+## Estado actual (2026-05-06) — Fase 7 + paginación — 119 tests
 
 ### Fase 1 ✅ — Auth
 Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout, authStore (Zustand).
@@ -94,13 +94,14 @@ Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, Regis
 - `POST /activities/enrich-names`: encola todas las actividades con `name IS NULL` del usuario
 - `apps/api/enrich_names.py` (CLI): `python enrich_names.py --user-email EMAIL [--force]` o `--all-users`
 
+### Mejoras adicionales ✅
+- **JWT_SECRET**: 256 bits (64 hex), generado con `openssl rand -hex 32`; lifetime 8 h (`JWT_LIFETIME_SECONDS=28800`)
+- **Paginación**: `GET /activities/` devuelve `{items, total, page, size, pages}`; `?page=1&size=20` (máx 100). `GET /activities/sports` para deportes distintos del usuario. Frontend: componente `Pagination` con prev/next y numeración.
+
 ---
 
 ## Bugs conocidos / trabajo pendiente
 - Las 114 actividades importadas en bulk tienen `name IS NULL` → ejecutar `docker compose exec api python enrich_names.py --all-users` (tarda ~15-20 min por rate-limit Nominatim)
-- `apps/api/bulk_import.py` es copia huérfana del script (original en `scripts/`); se puede borrar
-- `JWT_SECRET` dev tiene 30 bytes → `InsecureKeyLengthWarning`; producción: `openssl rand -hex 32`
-- Sin paginación en `GET /activities/` (irrelevante con 114 actividades)
 
 ---
 

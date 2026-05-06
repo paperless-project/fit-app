@@ -107,10 +107,11 @@ POST /auth/register, /auth/jwt/login, /auth/jwt/logout, /auth/verify
 GET|PATCH /users/me
 
 # Actividades
-GET    /activities/               filtros: q, sport, date_from, date_to
+GET    /activities/               paginado {items,total,page,size,pages}; filtros: q,sport,date_from,date_to,page,size
+GET    /activities/sports         lista deportes distintos del usuario
 POST   /activities/upload         multipart .fit → 201; 409 duplicado; 400 inválido
 POST   /activities/enrich-names   encola geocoding para actividades con name IS NULL
-GET    /activities/export/csv     CSV con mismos filtros
+GET    /activities/export/csv     CSV con mismos filtros (sin paginación, exporta todo)
 GET    /activities/{id}           detalle + records + laps
 PATCH  /activities/{id}           edición parcial: name, sport, notes
 GET    /activities/{id}/export/gpx  GPX 1.1 con extensiones Garmin
@@ -132,6 +133,7 @@ GET /stats/timeline?bucket=month|year
 | **5. Estadísticas** | /stats/summary+calendar+timeline, StatsPage, heatmap | ✅ Completa |
 | **6. Filtros + edición + exportación** | filtros, PATCH, CSV, GPX | ✅ Completa |
 | **7. Enriquecimiento asíncrono** | BackgroundTasks geocoding, CLI enrich_names.py | ✅ Completa |
+| **Mejoras** | JWT 256 bits / 8 h, paginación GET /activities/, GET /activities/sports | ✅ Completa |
 
 **119 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
 

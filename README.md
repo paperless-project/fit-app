@@ -98,7 +98,7 @@ fit-app/
 │   │   └── schemas/             activity.py, stats.py
 │   ├── alembic/versions/        Migraciones Alembic
 │   ├── tests/                   Suite pytest (119 tests)
-│   ├── bulk_import.py           CLI importación masiva de .fit
+│   ├── scripts/bulk_import.py   CLI importación masiva de .fit
 │   └── enrich_names.py          CLI geocoding inverso de nombres
 └── apps/web/                    Frontend React + Vite
     └── src/
@@ -109,9 +109,9 @@ fit-app/
 
 ## Funcionalidades implementadas
 
-- **Auth**: registro, verificación email, login/logout JWT, perfil
+- **Auth**: registro, verificación email, login/logout JWT (8 h), perfil
 - **Upload**: drag-and-drop `.fit`, deduplicación por hash, reparación automática de ficheros corruptos
-- **Listado**: filtros por nombre/deporte/fecha, exportar CSV
+- **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV completo
 - **Detalle**: mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
 - **Edición**: nombre, deporte y notas de cada actividad
 - **Nombres automáticos**: geocoding inverso Nominatim asíncrono — genera nombres tipo "Castillo de Olite desde Tafalla"
