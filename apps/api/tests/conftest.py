@@ -59,6 +59,17 @@ def mock_send_email():
         yield mock
 
 
+# ── Mock de geocoding (nunca llama a Nominatim en tests) ────────────────────
+@pytest.fixture(autouse=True)
+def mock_geocoding():
+    with patch(
+        "fitapp.services.activity_service.generate_activity_name",
+        new_callable=AsyncMock,
+        return_value=None,
+    ) as mock:
+        yield mock
+
+
 # ── Limpieza de tablas entre tests ─────────────────────────────────────────
 @pytest_asyncio.fixture(autouse=True)
 async def _clean_tables() -> AsyncGenerator[None, None]:

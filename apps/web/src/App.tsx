@@ -7,7 +7,8 @@ import PrivateRoute from '@/components/PrivateRoute';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import VerifyPage from '@/pages/VerifyPage';
-import ActivitiesPage from '@/pages/ActivitiesPage';
+import ActivitiesPage from '@/pages/ActivitiesPage'
+import ActivityDetailPage from '@/pages/ActivityDetailPage';
 
 export default function App() {
   const { token, setUser, setInitialized, logout } = useAuthStore();
@@ -35,6 +36,7 @@ export default function App() {
       <Route element={<PrivateRoute />}>
         <Route element={<Layout />}>
           <Route path="/activities" element={<ActivitiesPage />} />
+          <Route path="/activities/:id" element={<ActivityDetailPage />} />
           <Route path="/" element={<Navigate to="/activities" replace />} />
         </Route>
       </Route>

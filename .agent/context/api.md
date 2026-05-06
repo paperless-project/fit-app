@@ -1,72 +1,67 @@
 # API (FastAPI)
 
-## Endpoints registrados
+## Endpoints implementados
 
 ```
-GET  /health                          → {"status":"ok","version":"0.1.0"}
+GET  /health
 GET  /docs, /openapi.json
 
 # Auth (fastapi-users)
-POST /auth/register                   → crea usuario, envía email verificación
+POST /auth/register                   → crea usuario, envía email verificación automáticamente
 POST /auth/jwt/login                  → {access_token, token_type:"bearer"}
 POST /auth/jwt/logout
-POST /auth/verify                     → {token} → verifica email
-POST /auth/request-verify-token       → {email} → reenvía email verificación
+POST /auth/verify                     → {token} → is_verified=True
+POST /auth/request-verify-token       → reenvía email verificación
 
 # Usuarios
-GET  /users/me                        → usuario autenticado
-PATCH /users/me                       → actualizar email/password
-GET  /users/{id}                      → solo superuser (403 para usuarios normales)
-PATCH /users/{id}                     → solo superuser
-DELETE /users/{id}                    → solo superuser
+GET  /users/me
+PATCH /users/me                       → email o password
+GET|PATCH|DELETE /users/{id}          → solo superuser (403 para usuarios normales)
 
-# Recursos (ESQUELETOS)
-GET  /activities/                     → [] (Fase 2)
-GET  /stats/summary                   → {total_km:0, total_hours:0, total_activities:0} (Fase 5)
+# Actividades
+GET  /activities/                     → list[ActivityOut] del usuario autenticado, ordenado por started_at desc
+POST /activities/upload               → multipart .fit → parsear → persistir; 409 duplicado, 400 inválido
+GET  /activities/{id}                 → ActivityDetailOut (activity + records + laps)
+
+# Stats (esqueleto)
+GET  /stats/summary                   → {total_km:0, total_hours:0, total_activities:0}
 ```
 
-## Pendiente implementar (Fase 2+)
-```
-POST /activities/upload               multipart .fit → parsear → persistir
-GET  /activities/{id}
-GET  /activities/{id}/records
-GET  /activities/{id}/laps
-DELETE /activities/{id}
-GET  /stats/calendar?year=YYYY        (Fase 5)
-GET  /stats/timeline?bucket=month     (Fase 5)
+## Schemas clave
+```python
+ActivityOut          # campos planos de Activity (sin records/laps)
+ActivityDetailOut    # ActivityOut + records: list[RecordOut] + laps: list[LapOut]
+RecordOut            # ts, lat, lon, altitude_m, distance_m, speed_mps, heart_rate, cadence, power
+LapOut               # lap_index, start_time, duration_s, distance_m, avg_speed_mps, avg_hr, ascent_m
 ```
 
-## Auth
-- `current_active_user = fastapi_users.current_user(active=True)` — inyectar como `Depends`
-- Token: `Authorization: Bearer <token>`
-- `validate_password`: mínimo 8 caracteres (InvalidPasswordException)
-- `on_after_register` → llama `request_verify` → `on_after_request_verify` → envía email
-
-## Email
-- `services/email.py`: `send_verification_email(email, token)` — SMTP async via `asyncio.to_thread`
-- No-op si `settings.smtp_host` está vacío
-- En tests: parchear `fitapp.auth.users.send_verification_email` (autouse en conftest)
-
-## Ficheros clave
+## Servicios clave
 ```
-src/fitapp/main.py              app FastAPI, monta routers
-src/fitapp/config.py            pydantic-settings (POSTGRES_*, JWT_*, SMTP_*, FRONTEND_URL, CORS_*)
-src/fitapp/db.py                engine async + get_session + Base
-src/fitapp/auth/users.py        fastapi-users: UserManager, backends, current_active_user
-src/fitapp/models/              User, Activity, Record, Lap
-src/fitapp/schemas/             UserRead, UserCreate, UserUpdate
-src/fitapp/routers/             activities.py, stats.py (esqueletos)
-src/fitapp/services/email.py    send_verification_email()
-src/fitapp/services/fit_parser.py  parse_fit() — ESQUELETO (solo hash)
+services/fit_parser.py     parse_fit(), parse_fit_safe() → ParsedFit dataclass
+services/fit_repair.py     repair(path) → bytes; estrategias: check_crc=False + _apply_fixes, trim progresivo
+services/geocoding.py      generate_activity_name(records) → str|None; Nominatim, caché dict, rate-limit 1.1s
+services/activity_service.py  persist_activity() → dedupe hash, geocoding, dedup timestamps, flush+commit
+services/email.py          send_verification_email() → SMTP async via asyncio.to_thread
 ```
+
+## Gotchas implementación
+- `ST_X`/`ST_Y` no aceptan `geography` → usar `func.ST_AsGeoJSON(Record.position)` + `json.loads()`
+- Timestamps duplicados en records Garmin → deduplicar por `ts` en `persist_activity` antes de `db.add_all()`
+- `db.rollback()` necesario en bulk_import tras cada error para no envenenar la sesión
+- Mock geocoding en tests: `patch("fitapp.services.activity_service.generate_activity_name")`
+- Mock email en tests: `patch("fitapp.auth.users.send_verification_email")`
 
 ## Tests
 ```
-tests/conftest.py       NullPool engine, TRUNCATE entre tests, mock autouse de email
-tests/test_smoke.py     /health, /openapi.json
-tests/test_auth.py      register, login, /users/me, logout
-tests/test_users.py     PATCH /users/me, rutas admin requieren superuser
-tests/test_activities.py  GET /activities/ auth
-tests/test_stats.py     GET /stats/summary auth
+tests/conftest.py           NullPool, TRUNCATE entre tests, mock autouse email + geocoding
+tests/test_smoke.py         /health, /openapi.json
+tests/test_auth.py          register, login, /users/me, logout
+tests/test_users.py         PATCH /users/me, rutas admin
 tests/test_verification.py  flujo completo verificación email
+tests/test_activities.py    GET /activities/ auth + aislamiento por usuario
+tests/test_upload.py        POST /activities/upload (éxito, dup 409, inválido 400, auth)
+tests/test_activity_detail.py  GET /activities/{id} (records, GPS, 404, aislamiento)
+tests/test_stats.py         GET /stats/summary auth
+tests/test_repair.py        CRC-16, repair bad CRC, truncado, irreparable
+tests/test_geocoding.py     generate_activity_name (POIs, dedupe, fallbacks)
 ```

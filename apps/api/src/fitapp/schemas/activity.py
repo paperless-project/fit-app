@@ -12,6 +12,7 @@ class ActivityOut(BaseModel):
 
     id: uuid.UUID
     file_name: str
+    name: str | None
     sport: str | None
     started_at: datetime
     duration_s: int | None
@@ -27,3 +28,32 @@ class ActivityOut(BaseModel):
     avg_power: int | None
     calories: int | None
     created_at: datetime
+
+
+class RecordOut(BaseModel):
+    ts: datetime
+    lat: float | None = None
+    lon: float | None = None
+    altitude_m: float | None = None
+    distance_m: float | None = None
+    speed_mps: float | None = None
+    heart_rate: int | None = None
+    cadence: int | None = None
+    power: int | None = None
+
+
+class LapOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    lap_index: int
+    start_time: datetime
+    duration_s: int | None = None
+    distance_m: float | None = None
+    avg_speed_mps: float | None = None
+    avg_hr: int | None = None
+    ascent_m: float | None = None
+
+
+class ActivityDetailOut(ActivityOut):
+    records: list[RecordOut] = []
+    laps: list[LapOut] = []

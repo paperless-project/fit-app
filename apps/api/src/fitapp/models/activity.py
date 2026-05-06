@@ -32,6 +32,7 @@ class Activity(Base):
     )
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(255))
     sport: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime] = mapped_column(nullable=False)
 

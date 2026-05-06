@@ -3,40 +3,49 @@
 ## Estructura del repo
 ```
 fit-app/
-├── apps/api/          Python/FastAPI — src/fitapp/{auth,models,routers,services,schemas}
+├── apps/api/          Python/FastAPI — src/fitapp/{auth,models,routers,schemas,services}
 ├── apps/web/          React/Vite — src/{components,pages,lib,store,types}
-├── scripts/           bulk_import.py (CLI importación masiva, pendiente)
-└── doc/PLAN.md        Plan completo con fases, esquema BD, endpoints
+├── scripts/           bulk_import.py (CLI importación masiva)
+└── doc/PLAN.md        Plan original con fases y esquema BD
 ```
 
-## Flujo de datos (Fase 2 — pendiente)
+## Flujo de datos principal
 ```
 .fit file → POST /activities/upload (multipart)
-         → fit_parser.parse_fit() → ParsedFit dataclass
-         → persist Activity + Records + Laps (dedupe por user_id+file_hash)
-         → GET /activities/{id}/records → frontend → Chart.js + Leaflet
+          → parse_fit_safe()
+              → parse_fit()           OK → ParsedFit
+              → repair() si falla     → parse_fit() con fichero reparado
+          → persist_activity()
+              → generate_activity_name() → Nominatim OSM → name
+              → deduplica timestamps (pk records)
+              → INSERT activity + records + laps
+          → ActivityOut
+
+GET /activities/{id}
+          → SELECT activity
+          → SELECT records con ST_AsGeoJSON(position) → lat/lon
+          → SELECT laps
+          → ActivityDetailOut
 ```
 
-## Flujo de auth + verificación
+## Flujo auth + verificación email
 ```
-POST /auth/register → UserManager.on_after_register
-                    → request_verify() → on_after_request_verify
-                    → send_verification_email() → SMTP → Mailpit (dev)
-                    
-usuario pincha enlace → /verify?token=TOKEN (frontend)
-                      → POST /auth/verify (backend) → is_verified=True
+POST /auth/register → on_after_register → request_verify → on_after_request_verify
+                    → send_verification_email(email, token) → SMTP → Mailpit (dev)
+
+/verify?token=TOKEN → POST /auth/verify → is_verified=True
 ```
 
 ## Multi-tenant
-- Tabla `users` (fastapi-users, UUID PK)
-- Todos los recursos tienen `user_id FK → users(id) ON DELETE CASCADE`
-- `UNIQUE(user_id, file_hash)` en `activities` — mismo fichero puede ser de distintos usuarios
-- Endpoints filtran siempre por `current_active_user` del JWT
+- `user_id FK → users(id) ON DELETE CASCADE` en activities/records/laps
+- `UNIQUE(user_id, file_hash)` en activities — mismo fichero = distinto usuario OK
+- Todos los endpoints filtran por `current_active_user` del JWT
 
 ## Decisiones irreversibles
-- Parsing en backend (no en cliente)
-- PostgreSQL + PostGIS (no MySQL, no SQLite)
-- `fastapi-users` para auth (no JWT manual)
-- `uv` como gestor de paquetes Python
-- `pnpm` como gestor JS
+- Parsing en **backend**, no en cliente
+- **PostgreSQL** + PostGIS
+- **`fastapi-users`** para auth
+- **`uv`** / **`pnpm`** como gestores de paquetes
 - Verificación de email obligatoria al registrarse
+- Nombres de actividad via **Nominatim** (OSM, gratuito, sin API key)
+- FIT repair en **Python puro** (no depende de choochoo ni fit-java-sdk)

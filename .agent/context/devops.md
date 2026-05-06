@@ -8,37 +8,27 @@
 | `api` | `./apps/api` | 8000 | uvicorn --reload en dev |
 | `web` | `./apps/web` | 5173 | vite dev en dev |
 | `adminer` | `adminer:latest` | 8080 | solo override dev |
-| `mailpit` | `axllent/mailpit:latest` | 1026 (SMTP), 8026 (UI) | solo override dev; 1025 del host ocupado |
-
-## Variables de entorno de api (docker-compose.override.yml)
-```
-SMTP_HOST=mailpit       # nombre del servicio Docker
-SMTP_PORT=1025          # puerto interno del contenedor mailpit
-SMTP_FROM=noreply@fit-app.local
-FRONTEND_URL=http://localhost:5173
-```
+| `mailpit` | `axllent/mailpit:latest` | 1026(SMTP) 8026(UI) | 1025 del host ocupado → mapear 1026:1025 |
 
 ## Volúmenes
 - `db_data` — datos PostgreSQL
-- `api_venv` → `/opt/venv` — venv Python (CRÍTICO: fuera de `/app`)
+- `api_venv` → `/opt/venv` — venv Python (CRÍTICO: fuera de `/app`, que está montado)
 - `web_node_modules` → `/app/node_modules`
 - `/workspace/xabi/Activities` → `/activities:ro` — ficheros .fit (read-only)
 
-## Gotcha crítico del venv
-El `Dockerfile` instala el venv en `/opt/venv`.  
-`docker-compose.override.yml` monta `./apps/api:/app` y `api_venv:/opt/venv`.  
-`PYTHONPATH=/app/src` en `docker-compose.yml` es imprescindible.
+## Variables de entorno api (docker-compose.override.yml)
+```
+SMTP_HOST=mailpit  SMTP_PORT=1025  SMTP_FROM=noreply@fit-app.local
+FRONTEND_URL=http://localhost:5173
+```
 
-## Comandos
-
+## Comandos habituales
 ```bash
-# Arrancar / reconstruir
+# Arrancar / rebuild
 docker compose up --build -d
 
 # Rebuild completo (obligatorio si cambia pyproject.toml)
-docker compose down
-docker volume rm fit-app_api_venv
-docker compose up --build -d
+docker compose down && docker volume rm fit-app_api_venv && docker compose up --build -d
 
 # Migraciones
 docker compose exec api alembic upgrade head
@@ -47,11 +37,18 @@ docker compose exec api alembic revision --autogenerate -m "descripcion"
 # Tests
 docker compose exec api pytest
 
-# Logs
-docker compose logs -f api
-docker compose logs -f mailpit
+# Bulk import (EJECUTAR DENTRO del contenedor con PYTHONPATH)
+# ⚠️ scripts/ NO está en el volumen /app — copiar al contenedor o añadir al Dockerfile
+docker compose cp scripts/bulk_import.py api:/app/bulk_import.py
+docker compose exec api bash -c "cd /app && PYTHONPATH=/app/src python bulk_import.py --user-email EMAIL --path /activities"
 ```
 
-## Variables de entorno
-Copiar `.env.example` → `.env`. Nunca commitear `.env`.  
-`JWT_SECRET` — cambiar en cualquier deploy no-local (actualmente 30 bytes, avisa warning; usar ≥32).
+## Gotcha crítico venv
+El `Dockerfile` instala venv en `/opt/venv`.
+`docker-compose.override.yml` monta `./apps/api:/app` (taparía `/app/.venv`).
+`api_venv:/opt/venv` preserva el venv entre reinicios.
+`PYTHONPATH=/app/src` es imprescindible (uv editable install no genera `.pth`).
+
+## JWT_SECRET
+- En dev: 30 bytes → InsecureKeyLengthWarning (inofensivo en dev)
+- En producción: usar `openssl rand -hex 32` y configurar en `.env`

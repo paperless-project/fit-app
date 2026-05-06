@@ -56,6 +56,7 @@ async def import_folder(user_email: str, folder: Path) -> None:
                     print(f"  [{i:3d}/{len(fit_files)}] OK       {path.name}  {parsed.distance_m or 0:.0f}m")
                     imported += 1
             except Exception as exc:
+                await db.rollback()  # resetear sesion para que el siguiente fichero funcione
                 print(f"  [{i:3d}/{len(fit_files)}] ERR      {path.name}: {exc}", file=sys.stderr)
                 errors += 1
 

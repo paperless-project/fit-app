@@ -3,7 +3,7 @@
 ## Objetivo
 App web para importar ficheros FIT (actividades ciclistas), almacenarlos en PostgreSQL y generar visualizaciones: mapa GPS, gráficas de velocidad/FC/cadencia/potencia/altitud, estadísticas agregadas. Multi-usuario con auth JWT.
 
-Ficheros fuente en `/workspace/xabi/Activities/` (118 ficheros `.fit`). **Solo lectura** — no modificar.
+Ficheros fuente en `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`). **Solo lectura** — no modificar.
 
 ---
 
@@ -14,7 +14,9 @@ Ficheros fuente en `/workspace/xabi/Activities/` (118 ficheros `.fit`). **Solo l
 | Backend | Python 3.12 + FastAPI + SQLAlchemy 2.0 + Alembic + GeoAlchemy2 |
 | Auth | `fastapi-users` (JWT + verificación email) |
 | Email dev | Mailpit (SMTP local) |
-| Parsing FIT | `fitparse` (en backend, pendiente) |
+| Parsing FIT | `fitparse` |
+| Reparación FIT | `services/fit_repair.py` (CRC-16 + trim progresivo, inspirado en choochoo) |
+| Geocoding | `services/geocoding.py` (Nominatim OSM, rate-limit 1 req/s, caché ~1km) |
 | BD | PostgreSQL 16 + PostGIS (`postgis/postgis:16-3.4`) |
 | Frontend | React 18 + Vite + TypeScript + Tailwind + Chart.js + Leaflet + TanStack Query + Zustand |
 | Infra dev | Docker Compose (`db`, `api`, `web`, `adminer`, `mailpit`) |
@@ -43,57 +45,59 @@ Ficheros fuente en `/workspace/xabi/Activities/` (118 ficheros `.fit`). **Solo l
 - **`include_object` en `alembic/env.py`** — filtra ~35 tablas PostGIS/Tiger del autogenerate.
 - Nunca `Base.metadata.create_all()` — siempre Alembic.
 - Extensiones (`uuid-ossp`, `postgis`, `citext`) se crean en la primera migración.
-- **Tests usan `NullPool`** — sin reutilización de conexiones entre tests; evita "operation in progress" de asyncpg.
-- **Mock de email en tests**: parchear `fitapp.auth.users.send_verification_email` (no `fitapp.services.email`).
-- Puerto 1025 del host ocupado → Mailpit usa `1026:1025` (host:container). El api habla con mailpit por red interna en puerto 1025.
+- **Tests usan `NullPool`** — sin reutilización de conexiones entre tests.
+- **Mock de email en tests**: parchear `fitapp.auth.users.send_verification_email`.
+- **Mock de geocoding en tests**: parchear `fitapp.services.activity_service.generate_activity_name`.
+- **`ST_X`/`ST_Y` no funcionan sobre `geography`** — usar `ST_AsGeoJSON` y parsear JSON.
+- **Timestamps duplicados en records** — algunos dispositivos Garmin repiten el mismo segundo; deduplicar por `ts` antes de insertar (ya corregido en `activity_service.py`).
+- Puerto 1025 del host ocupado → Mailpit usa `1026:1025`.
+- **`scripts/bulk_import.py` requiere `PYTHONPATH=/app/src`** y ejecutarse desde `/app` dentro del contenedor.
 
 ---
 
-## Estado actual (2026-05-05)
+## Estado actual (2026-05-06)
 
-### Fase 1 — Completa ✅ (35 tests pasando)
+### Fase 1 — Completa ✅
+Auth completa (register + verify email + login/logout + `/users/me`). Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout.
 
-**Backend:**
-- Stack Docker arranca con `docker compose up --build` (5 servicios: db, api, web, adminer, mailpit)
-- BD schema completo: `users`, `activities`, `laps`, `records` + índices GiST
-- Migración Alembic aplicada (rev `379c3241c147`)
-- Auth completa vía `fastapi-users`:
-  - `POST /auth/register` — crea usuario, envía email de verificación automáticamente
-  - `POST /auth/jwt/login` / `POST /auth/jwt/logout`
-  - `GET|PATCH /users/me`
-  - `POST /auth/verify` — verifica token del email
-  - `POST /auth/request-verify-token` — reenvía email de verificación
-  - `GET|PATCH|DELETE /users/{id}` — solo superuser (403 para usuarios normales)
-- `UserManager.validate_password`: mínimo 8 caracteres
-- Servicio de email (`services/email.py`): SMTP async via `asyncio.to_thread`; no-op si `SMTP_HOST` vacío
-- Mailpit en `http://localhost:8026` para capturar emails en dev
+### Fase 2 — Completa ✅
+- `parse_fit()`: extrae session/records/laps, convierte semicírculos→grados, genera WKT.
+- `parse_fit_safe()`: intenta parsear; si falla, repara y reintenta; preserva hash original.
+- `fit_repair.py`: CRC-16 FIT + trim progresivo hasta 8192 bytes (inspirado en choochoo).
+- `POST /activities/upload`: multipart, dedupe por `(user_id, file_hash)`, 409 duplicado.
+- `scripts/bulk_import.py`: importa 114/114 ficheros sin errores.
+- `GET /activities/`: lista actividades del usuario autenticado.
 
-**Frontend:**
-- `LoginPage` — formulario email/password, redirige a `/activities`
-- `RegisterPage` — formulario con validación, redirige a `/login`
-- `VerifyPage` — lee `?token=` de la URL, llama a `/auth/verify`, muestra éxito/error
-- `PrivateRoute` — redirige a `/login` si no hay token; spinner mientras inicializa
-- `Layout` — navbar con email del usuario y botón logout
-- `authStore` (Zustand) — token en `localStorage`, hidratación en mount via `/users/me`
-- Manejo global de 401 en `api.ts` — limpia token y redirige a `/login`
+### Fase 3 — Completa ✅
+- Nombres de actividad generados automáticamente via Nominatim OSM: "POI1, POI2 y POI3 desde StartLocality".
+- Columna `name` en `activities` (migración `6bf7f63a1065`).
+- `ActivitiesPage`: tabla con Fecha, Actividad (nombre/deporte), Distancia, Duración, Desnivel, Vel. media, FC media, Calorías.
+- Modal drag-and-drop para subir ficheros `.fit`.
+- Filas clicables → navegan a detalle.
 
-### Esqueletos (código presente, sin implementación real)
-- `GET /activities/` → devuelve `[]`
-- `GET /stats/summary` → devuelve `{total_km:0, total_hours:0, total_activities:0}`
-- `services/fit_parser.py` → `parse_fit()` solo calcula SHA-256, no extrae datos FIT
-- `scripts/bulk_import.py` → itera ficheros, no persiste
-- `ActivitiesPage` → placeholder "Próximamente"
+### Fase 4 — Completa ✅
+- `GET /activities/{id}`: devuelve actividad + records (lat/lon via `ST_AsGeoJSON`) + laps.
+- `ActivityDetailPage`: cabecera con stats, mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas, tabla de vueltas.
+- `ActivityMap`: polyline GPS, marcadores inicio/fin, punto móvil sincronizado con gráficas.
+- `ActivityCharts`: altitud, velocidad, FC, cadencia, potencia; crosshair sincronizado; tooltip con distancia.
+
+**Tests: 77 pasando.**
 
 ---
 
-## Trabajo pendiente (Fase 2 →)
+## Trabajo pendiente
 
-1. **Fase 2** — `fit_parser.py` real: extraer session/records/laps con `fitparse`
-2. **Fase 2** — `POST /activities/upload`: multipart, parsear, persistir con dedupe `(user_id, file_hash)`
-3. **Fase 2** — Completar `scripts/bulk_import.py`
-4. **Fase 3** — Listado de actividades (tabla + filtros + paginación)
-5. **Fase 4** — Detalle de actividad (mapa Leaflet + gráficas Chart.js sincronizadas)
-6. **Fase 5** — Estadísticas agregadas (heatmap calendario, evolución mensual)
+### Fase 5 — Dashboard de estadísticas
+- `GET /stats/summary`: total km, horas, actividades, desnivel
+- `GET /stats/calendar?year=YYYY`: heatmap tipo GitHub
+- `GET /stats/timeline?bucket=month`: evolución mensual de km/horas
+- Frontend: página Stats con heatmap calendario + gráficos de tendencia
+
+### Mejoras conocidas / bugs
+- Los nombres de actividad de las 114 actividades importadas en bulk son `NULL` (el geocoding en bulk_import tarda mucho por el rate-limit de Nominatim; considerar job asíncrono o comando separado de "enriquecer nombres").
+- `apps/api/bulk_import.py` es un fichero huérfano (copia temporal usada para ejecutar en el contenedor); ignorar o borrar.
+- `JWT_SECRET` en dev tiene 30 bytes (warning InsecureKeyLengthWarning); usar ≥32 bytes en producción.
+- No hay paginación en `GET /activities/` (irrelevante con 114 actividades, problema futuro con más datos).
 
 ---
 
@@ -111,12 +115,13 @@ docker compose exec api alembic upgrade head
 
 # Nueva migración (tras tocar models/)
 docker compose exec api alembic revision --autogenerate -m "descripcion"
+# ⚠️ Revisar el fichero generado: el autogenerate detecta falsos positivos con índices GiST
 
 # Rebuild completo (si cambia pyproject.toml)
 docker compose down && docker volume rm fit-app_api_venv && docker compose up --build -d
 
-# Importar Activities/ (cuando esté implementado)
-docker compose exec api python -m scripts.bulk_import --user-email tu@email.com --path /activities
+# Importar Activities/ (ejecutar DENTRO del contenedor api con PYTHONPATH correcto)
+docker compose exec api bash -c "cd /app && PYTHONPATH=/app/src python bulk_import.py --user-email EMAIL --path /activities"
 ```
 
 ## URLs locales
@@ -129,9 +134,3 @@ docker compose exec api python -m scripts.bulk_import --user-email tu@email.com 
 | Adminer | http://localhost:8080 |
 | Mailpit (dev email) | http://localhost:8026 |
 | DB | localhost:5432 (user/pass: `fitapp`) |
-
-## Referencia
-- Plan completo: `doc/PLAN.md`
-- Spec FIT: https://developer.garmin.com/fit/
-- `fitparse`: https://github.com/dtcooper/python-fitparse
-- `fastapi-users`: https://fastapi-users.github.io/fastapi-users/
