@@ -1,109 +1,31 @@
 # Plan de trabajo — fit-app
 
-Aplicación web para leer ficheros FIT (Flexible and Interoperable Data Transfer) de actividades ciclistas y generar visualizaciones (mapas GPS, gráficas, agregados). Los ficheros fuente están en `/workspace/xabi/Activities/` (118 ficheros `.fit`).
+Aplicación web para importar ficheros FIT (actividades ciclistas) y generar visualizaciones (mapas GPS, gráficas, estadísticas). Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`).
 
 ## 1. Decisiones de arquitectura
 
 | Decisión | Elección | Motivo |
 |---|---|---|
-| Dónde se parsea el FIT | Backend (Python `fitparse`) | Una sola fuente de verdad; reprocesable si cambia el esquema |
-| Backend | Python + FastAPI + SQLAlchemy 2.0 + Alembic | Ecosistema fuerte para análisis de datos; OpenAPI gratis |
-| Base de datos | PostgreSQL 16 + PostGIS | JSONB con índices, geoespacial maduro, particionado nativo |
-| Frontend | React + Vite + TypeScript + Tailwind | Ecosistema gráficas/mapas maduro; sin SSR necesario |
-| Auth | `fastapi-users` (JWT) | Registro, login, hashing y refresh tokens ya implementados |
-| Multi-usuario | Previsto desde el inicio | Tabla `users` y FK `user_id` en `activities` |
-| Despliegue dev | Docker Compose (db + api + web) | Reproducible, hot-reload con volúmenes montados |
-| Gestor paquetes Python | `uv` | Rápido, moderno, lockfile reproducible |
-| Importación inicial | Script CLI `scripts/bulk_import.py` | Más control para los 118 ficheros de partida |
+| Parsing FIT | Backend (Python `fitparse`) | Una sola fuente de verdad; reprocesable |
+| Backend | FastAPI + SQLAlchemy 2.0 + Alembic | OpenAPI gratis, async nativo |
+| Base de datos | PostgreSQL 16 + PostGIS | Geoespacial maduro; geography nativa |
+| Frontend | React 18 + Vite + TypeScript + Tailwind | Ecosistema gráficas/mapas maduro |
+| Auth | `fastapi-users` (JWT + verificación email) | Registro, hashing, tokens ya implementados |
+| Multi-usuario | Desde el inicio | FK `user_id` en todas las tablas de datos |
+| Geocoding | Nominatim OSM (sin API key) | Gratuito, sin límite de cuota estricto |
+| Despliegue dev | Docker Compose | Reproducible, hot-reload con volúmenes |
+| Gestores de paquetes | `uv` (Python) + `pnpm` (JS) | Rápidos, lockfile reproducible |
+| Importación inicial | CLI `bulk_import.py` | Control total sobre 114 ficheros de partida |
 
-## 2. Stack técnico detallado
-
-### Backend (`apps/api`)
-- **FastAPI** + **uvicorn** (ASGI)
-- **SQLAlchemy 2.0** (estilo declarativo nuevo) + **Alembic** (migraciones)
-- **GeoAlchemy2** + **Shapely** para tipos geoespaciales
-- **fitparse** para leer los ficheros `.fit`
-- **fastapi-users[sqlalchemy]** para autenticación
-- **pydantic-settings** para configuración por entorno
-- **pytest** + **pytest-asyncio** + **httpx** para tests
-
-### Frontend (`apps/web`)
-- **React 18** + **Vite 5** + **TypeScript 5**
-- **Tailwind CSS** + componentes propios (sin librería pesada)
-- **TanStack Query** para llamadas a la API y cache cliente
-- **React Router** para navegación
-- **Chart.js** + `react-chartjs-2` para gráficas (alternativa: Recharts)
-- **Leaflet** + `react-leaflet` para mapas (OSM tiles)
-- **openapi-typescript** para generar el cliente API desde el OpenAPI de FastAPI
-- **Zustand** para estado global ligero
-
-### Infraestructura
-- **PostgreSQL 16** con extensión **PostGIS** (imagen `postgis/postgis:16-3.4`)
-- **Docker Compose** con `docker-compose.yml` (base) + `docker-compose.override.yml` (dev)
-- **Adminer** opcional para inspección de BD
-
-## 3. Estructura del repositorio
-
-```
-fit-app/
-├── README.md
-├── CLAUDE.md
-├── .gitignore
-├── .env.example
-├── docker-compose.yml
-├── docker-compose.override.yml
-├── doc/
-│   └── PLAN.md
-├── apps/
-│   ├── api/
-│   │   ├── Dockerfile
-│   │   ├── pyproject.toml
-│   │   ├── alembic.ini
-│   │   ├── alembic/
-│   │   │   ├── env.py
-│   │   │   ├── script.py.mako
-│   │   │   └── versions/
-│   │   ├── src/fitapp/
-│   │   │   ├── __init__.py
-│   │   │   ├── main.py            # app FastAPI
-│   │   │   ├── config.py          # pydantic-settings
-│   │   │   ├── db.py              # engine + session
-│   │   │   ├── models/            # User, Activity, Record, Lap
-│   │   │   ├── schemas/           # Pydantic
-│   │   │   ├── routers/           # auth, activities, stats
-│   │   │   ├── services/          # fit_parser, stats
-│   │   │   └── auth/              # config fastapi-users
-│   │   └── tests/
-│   └── web/
-│       ├── Dockerfile
-│       ├── package.json
-│       ├── tsconfig.json
-│       ├── vite.config.ts
-│       ├── tailwind.config.js
-│       ├── postcss.config.js
-│       ├── index.html
-│       └── src/
-│           ├── main.tsx
-│           ├── App.tsx
-│           ├── index.css
-│           ├── components/
-│           ├── pages/
-│           ├── hooks/
-│           ├── lib/               # api client, formateadores
-│           └── types/
-└── scripts/
-    └── bulk_import.py             # carga inicial de Activities/
-```
-
-## 4. Esquema de base de datos
+## 2. Esquema de base de datos
 
 ```sql
--- Extensiones
+-- Extensiones (primera migración)
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS citext;
 
--- Usuarios (fastapi-users)
+-- Usuarios (gestionado por fastapi-users)
 CREATE TABLE users (
   id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   email           citext UNIQUE NOT NULL,
@@ -120,6 +42,8 @@ CREATE TABLE activities (
   user_id         uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   file_hash       text NOT NULL,
   file_name       text NOT NULL,
+  name            varchar(255),          -- geocoding inverso (asíncrono post-upload)
+  notes           text,                  -- notas libres del usuario
   sport           text,
   started_at      timestamptz NOT NULL,
   duration_s      integer,
@@ -136,15 +60,11 @@ CREATE TABLE activities (
   calories        integer,
   start_point     geography(Point, 4326),
   bbox            geography(Polygon, 4326),
-  summary         jsonb,
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, file_hash)
 );
-CREATE INDEX activities_user_started_idx ON activities (user_id, started_at DESC);
-CREATE INDEX activities_start_point_gix  ON activities USING GIST (start_point);
-CREATE INDEX activities_summary_gin      ON activities USING GIN (summary);
 
--- Records (serie temporal, ~1 fila por segundo)
+-- Records (serie temporal, ~1 fila/segundo)
 CREATE TABLE records (
   activity_id  uuid NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
   ts           timestamptz NOT NULL,
@@ -159,7 +79,7 @@ CREATE TABLE records (
   PRIMARY KEY (activity_id, ts)
 );
 
--- Vueltas (laps)
+-- Vueltas
 CREATE TABLE laps (
   id            uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   activity_id   uuid NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
@@ -174,57 +94,69 @@ CREATE TABLE laps (
 );
 ```
 
-## 5. API REST
+**Migraciones aplicadas:**
+- `379c3241c147` — initial_schema (tablas + extensiones + índices GiST)
+- `6bf7f63a1065` — add_activity_name
+- `472807ab1cee` — add_notes_to_activities
 
-### Autenticación (`fastapi-users`)
-- `POST /auth/register`
-- `POST /auth/jwt/login`
-- `POST /auth/jwt/logout`
-- `GET  /users/me`
+## 3. API REST implementada
 
-### Actividades
-- `POST   /activities/upload` — multipart, uno o varios `.fit`
-- `GET    /activities` — paginado, filtros `from`, `to`, `sport`
-- `GET    /activities/{id}`
-- `GET    /activities/{id}/records` — serie temporal completa
-- `GET    /activities/{id}/laps`
-- `DELETE /activities/{id}`
+```
+# Auth
+POST /auth/register, /auth/jwt/login, /auth/jwt/logout, /auth/verify
+GET|PATCH /users/me
 
-### Estadísticas
-- `GET /stats/summary` — totales del usuario
-- `GET /stats/calendar?year=YYYY` — datos para heatmap
-- `GET /stats/timeline?bucket=month|week`
+# Actividades
+GET    /activities/               filtros: q, sport, date_from, date_to
+POST   /activities/upload         multipart .fit → 201; 409 duplicado; 400 inválido
+POST   /activities/enrich-names   encola geocoding para actividades con name IS NULL
+GET    /activities/export/csv     CSV con mismos filtros
+GET    /activities/{id}           detalle + records + laps
+PATCH  /activities/{id}           edición parcial: name, sport, notes
+GET    /activities/{id}/export/gpx  GPX 1.1 con extensiones Garmin
 
-Todos los endpoints (excepto auth) filtran por `user_id` extraído del JWT.
+# Estadísticas
+GET /stats/summary
+GET /stats/calendar?year=YYYY
+GET /stats/timeline?bucket=month|year
+```
 
-## 6. Fases de desarrollo
+## 4. Fases de desarrollo
 
-| Fase | Contenido | Estimación |
+| Fase | Contenido | Estado |
 |---|---|---|
-| **0. Setup** | Repo, Docker Compose, FastAPI hello, Vite hello, conexión Postgres, primera migración Alembic con `users` | 1 día |
-| **1. Auth** | `fastapi-users` configurado, registro/login operativos, login en frontend, guard de rutas | ½ día |
-| **2. Upload + parsing** | Modelos `Activity/Record/Lap`, servicio `fit_parser`, endpoint upload con dedupe por hash, drag-and-drop con barra de progreso | 1½ días |
-| **3. Listado de actividades** | Tabla con filtros, paginación, totales | 1 día |
-| **4. Detalle de actividad** | Mapa Leaflet, gráficas sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de laps | 2 días |
-| **5. Análisis agregado** | Calendario heatmap, evolución mensual, distribución FC | 1–2 días |
-| **6. Pulido** | Modo oscuro, responsive, exportar PNG, script `bulk_import.py`, README | 1 día |
+| **1. Auth** | fastapi-users, JWT, verificación email, frontend auth | ✅ Completa |
+| **2. Upload + parsing** | parse_fit, fit_repair, POST /upload, bulk_import CLI | ✅ Completa |
+| **3. Listado + nombres** | GET /activities/, geocoding Nominatim, ActivitiesPage | ✅ Completa |
+| **4. Detalle** | GET /activities/{id}, mapa Leaflet, gráficas Chart.js sincronizadas | ✅ Completa |
+| **5. Estadísticas** | /stats/summary+calendar+timeline, StatsPage, heatmap | ✅ Completa |
+| **6. Filtros + edición + exportación** | filtros, PATCH, CSV, GPX | ✅ Completa |
+| **7. Enriquecimiento asíncrono** | BackgroundTasks geocoding, CLI enrich_names.py | ✅ Completa |
 
-**Total estimado: 8–10 días.**
+**119 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
 
-## 7. Riesgos / consideraciones
+## 5. Flujo de datos principal
 
-- **Variabilidad entre ficheros FIT:** no todos traen potencia, cadencia o temperatura. La UI debe ocultar gráficas vacías en lugar de mostrarlas planas.
-- **Huecos en GPS:** filtrar puntos atípicos antes de pintar la ruta (saltos > umbral).
-- **Carga inicial de 118 ficheros:** procesar en lote con barra de progreso; commits por bloques para no agotar memoria.
-- **Privacidad de datos GPS:** las actividades pertenecen a un usuario; nunca exponer datos cruzados sin auth.
-- **Tamaño de `records`:** una salida de 2h ≈ 7200 filas. 118 actividades ≈ 1M filas. PostgreSQL lo gestiona sin problema con el índice por PK compuesta. Si crece mucho, valorar `TimescaleDB`.
+```
+.fit file → POST /activities/upload
+          → parse_fit_safe()    # intenta parsear; si falla, repara CRC y reintenta
+          → persist_activity()  # dedupe por (user_id, file_hash), INSERT, COMMIT
+          → BackgroundTasks: _enrich_name_bg(activity.id)
+              → generate_activity_name(records)
+                  # Nominatim: start locality + end locality + 5 waypoints intermedios
+                  # "POI1, POI2 desde Locality" | "De A a B vía POI"
+              → UPDATE activities.name
 
-## 8. Estado actual
+GET /activities/{id}
+          → SELECT activity + ST_AsGeoJSON(records.position) + laps
+          → ActivityDetailOut
+```
 
-- Estructura del repo creada
-- `CLAUDE.md` con contexto del proyecto
-- Ficheros de configuración base (Docker, env, gitignore)
-- Esqueletos de `apps/api` y `apps/web`
-- Script `scripts/bulk_import.py` (esqueleto)
+## 6. Consideraciones técnicas
 
-**Siguiente paso:** Fase 0 — completar `apps/api/main.py` con conexión real a Postgres y crear la primera migración Alembic con la tabla `users`.
+- **Variabilidad FIT:** no todos traen potencia, cadencia o temperatura. La UI oculta gráficas vacías.
+- **GPS duplicado:** algunos Garmin repiten el mismo timestamp → deduplicar por `ts` antes de INSERT.
+- **geography vs geometry:** usar `ST_AsGeoJSON` para extraer lat/lon (ST_X/ST_Y no aceptan `geography`).
+- **Alembic + GiST:** el autogenerate detecta falsos positivos con índices GiST → revisar siempre el fichero generado.
+- **Geocoding rate-limit:** Nominatim permite máx 1 req/s → enriquecimiento de 114 actividades tarda ~15-20 min.
+- **Tamaño records:** ~1 fila/segundo × 114 actividades ≈ cientos de miles de filas. PK compuesta `(activity_id, ts)` es suficiente para el volumen actual.

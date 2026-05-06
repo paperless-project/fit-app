@@ -1,85 +1,120 @@
 # fit-app
 
-Aplicación web para leer ficheros FIT (Flexible and Interoperable Data Transfer) de actividades ciclistas, almacenarlos en PostgreSQL y generar visualizaciones: mapa GPS de la ruta, gráficas de altitud / velocidad / frecuencia cardíaca / cadencia / potencia, y agregados (totales, calendario, evolución).
+Aplicación web para importar ficheros FIT (actividades ciclistas), almacenarlos en PostgreSQL+PostGIS y generar visualizaciones: mapa GPS, gráficas de altitud/velocidad/FC/cadencia/potencia, estadísticas agregadas y calendario de actividad. Multi-usuario con autenticación JWT.
 
-## Arquitectura
+## Stack
 
-- **Backend:** Python 3.12 + FastAPI + SQLAlchemy 2.0 + Alembic + GeoAlchemy2
-- **Parsing:** `fitparse` (en el backend, una sola fuente de verdad)
-- **Auth:** `fastapi-users` con JWT (multi-usuario)
-- **BD:** PostgreSQL 16 + PostGIS
-- **Frontend:** React 18 + Vite + TypeScript + Tailwind + Chart.js + Leaflet
-- **Infra dev:** Docker Compose
-
-Plan completo en [`doc/PLAN.md`](doc/PLAN.md). Contexto y convenciones para futuras sesiones de desarrollo en [`CLAUDE.md`](CLAUDE.md).
+| Capa | Tecnología |
+|---|---|
+| Backend | Python 3.12 + FastAPI + SQLAlchemy 2.0 + Alembic + GeoAlchemy2 |
+| Auth | `fastapi-users` (JWT + verificación email) |
+| Parsing FIT | `fitparse` + reparación CRC-16 propia |
+| Geocoding | Nominatim OSM (sin API key) |
+| BD | PostgreSQL 16 + PostGIS |
+| Frontend | React 18 + Vite + TypeScript + Tailwind + Chart.js + Leaflet |
+| Infra dev | Docker Compose |
 
 ## Requisitos
 
-- Docker Desktop / Docker Engine
-- Docker Compose v2
+- Docker Engine + Docker Compose v2
 
-No es necesario tener Python ni Node instalados localmente: todo corre en contenedores.
+No es necesario tener Python ni Node instalados localmente.
 
 ## Arranque rápido
 
 ```bash
-# 1. Copiar variables de entorno
+# 1. Variables de entorno
 cp .env.example .env
 
-# 2. Levantar todo (db + api + web + adminer)
-docker compose up --build
+# 2. Levantar el stack completo
+docker compose up --build -d
 
-# 3. Aplicar migraciones (en otra terminal)
+# 3. Aplicar migraciones
 docker compose exec api alembic upgrade head
 ```
 
-Servicios:
+## URLs locales
 
-| Servicio | URL                       | Notas                              |
-|----------|---------------------------|------------------------------------|
-| Web      | http://localhost:5173     | UI                                 |
-| API      | http://localhost:8000     | Docs en `/docs`, OpenAPI en `/openapi.json` |
-| Adminer  | http://localhost:8080     | Inspección de la BD (system: PostgreSQL, server: db) |
-| DB       | localhost:5432            | usuario/contraseña `fitapp` por defecto |
+| Servicio | URL | Notas |
+|---|---|---|
+| Web | http://localhost:5173 | UI principal |
+| API | http://localhost:8000 | REST + `/docs` OpenAPI |
+| Adminer | http://localhost:8080 | Inspección BD (system: PostgreSQL, server: db) |
+| Mailpit | http://localhost:8026 | Bandeja de entrada emails dev |
+| DB | localhost:5432 | usuario/contraseña: `fitapp` |
 
-## Importar la carpeta `Activities/` por primera vez
+## Importar actividades
 
 ```bash
-# Crear primero un usuario con POST /auth/register desde la UI o curl
-docker compose exec api python -m scripts.bulk_import \
-  --user-email tu@email.com \
-  --path /activities
+# 1. Registrar un usuario (desde la UI o la consola)
+# 2. Importar los ficheros .fit en bulk
+docker compose exec api python bulk_import.py --user-email tu@email.com --path /activities
+
+# 3. Enriquecer los nombres via geocoding inverso (Nominatim, ~1 min por actividad)
+docker compose exec api python enrich_names.py --user-email tu@email.com
+# O para todos los usuarios:
+docker compose exec api python enrich_names.py --all-users
 ```
 
 `/activities` está montado en el contenedor desde `/workspace/xabi/Activities` en modo solo-lectura.
 
+## Tests
+
+```bash
+docker compose exec api pytest
+# → 119 tests pasando
+```
+
 ## Desarrollo
 
 ```bash
-# Backend: nueva migración tras tocar models
+# Nueva migración tras modificar models/
 docker compose exec api alembic revision --autogenerate -m "descripcion"
+# ⚠️ Revisar el fichero antes de aplicar: autogenerate detecta falsos positivos con índices GiST
 docker compose exec api alembic upgrade head
 
-# Tests backend
-docker compose exec api pytest
-
-# Frontend: regenerar cliente TS desde el OpenAPI del backend
-docker compose exec web pnpm run gen:api
+# Rebuild completo (si cambia pyproject.toml)
+docker compose down && docker volume rm fit-app_api_venv && docker compose up --build -d
 ```
 
 ## Estructura del repositorio
 
 ```
 fit-app/
-├── doc/PLAN.md         Plan completo del proyecto
-├── CLAUDE.md           Contexto y convenciones para sesiones de IA
-├── docker-compose.yml  Servicios base
-├── docker-compose.override.yml  Ajustes para dev
-├── apps/api/           Backend FastAPI
-├── apps/web/           Frontend React + Vite
-└── scripts/            Utilidades CLI (importación masiva)
+├── CLAUDE.md                    Contexto técnico y convenciones para sesiones de IA
+├── doc/PLAN.md                  Plan de desarrollo y decisiones de arquitectura
+├── .agent/context/              Documentación técnica detallada por área
+│   ├── api.md                   Endpoints, schemas, servicios, tests
+│   ├── architecture.md          Flujos de datos, decisiones irreversibles
+│   ├── database.md              Esquema BD, migraciones, gotchas
+│   ├── devops.md                Docker, comandos, variables de entorno
+│   ├── frontend.md              Estructura React, componentes, convenciones
+│   └── status.md                Estado de fases y trabajo pendiente
+├── apps/api/                    Backend FastAPI
+│   ├── src/fitapp/
+│   │   ├── routers/             activities.py, stats.py
+│   │   ├── services/            fit_parser.py, fit_repair.py, geocoding.py, activity_service.py
+│   │   ├── models/              activity.py, user.py
+│   │   └── schemas/             activity.py, stats.py
+│   ├── alembic/versions/        Migraciones Alembic
+│   ├── tests/                   Suite pytest (119 tests)
+│   ├── bulk_import.py           CLI importación masiva de .fit
+│   └── enrich_names.py          CLI geocoding inverso de nombres
+└── apps/web/                    Frontend React + Vite
+    └── src/
+        ├── pages/               ActivitiesPage, ActivityDetailPage, StatsPage, Auth*
+        ├── components/          ActivityMap, ActivityCharts, Layout
+        └── lib/                 activities.ts, stats.ts, api.ts
 ```
 
-## Estado
+## Funcionalidades implementadas
 
-Esqueleto inicial creado. Próximo hito: completar la Fase 0 — primera migración Alembic y verificación del stack en local. Ver [`doc/PLAN.md`](doc/PLAN.md) §6.
+- **Auth**: registro, verificación email, login/logout JWT, perfil
+- **Upload**: drag-and-drop `.fit`, deduplicación por hash, reparación automática de ficheros corruptos
+- **Listado**: filtros por nombre/deporte/fecha, exportar CSV
+- **Detalle**: mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
+- **Edición**: nombre, deporte y notas de cada actividad
+- **Nombres automáticos**: geocoding inverso Nominatim asíncrono — genera nombres tipo "Castillo de Olite desde Tafalla"
+- **Estadísticas**: totales, calendario heatmap estilo GitHub, evolución mensual
+
+Contexto técnico completo en [`CLAUDE.md`](CLAUDE.md) y [`doc/PLAN.md`](doc/PLAN.md).
