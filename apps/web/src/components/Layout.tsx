@@ -19,6 +19,14 @@ export default function Layout() {
           <Link to="/activities" className="text-lg font-semibold text-slate-800 hover:text-slate-600">
             fit-app
           </Link>
+          <nav className="flex gap-4">
+            <Link to="/activities" className="text-sm text-slate-600 hover:text-slate-900">
+              Actividades
+            </Link>
+            <Link to="/stats" className="text-sm text-slate-600 hover:text-slate-900">
+              Estadísticas
+            </Link>
+          </nav>
           <div className="flex items-center gap-4">
             <span className="text-sm text-slate-500">{user?.email}</span>
             <button

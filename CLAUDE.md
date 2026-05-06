@@ -55,7 +55,7 @@ Ficheros fuente en `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`). **S
 
 ---
 
-## Estado actual (2026-05-06)
+## Estado actual (2026-05-06) — Fase 5 completa
 
 ### Fase 1 — Completa ✅
 Auth completa (register + verify email + login/logout + `/users/me`). Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout.
@@ -81,17 +81,15 @@ Auth completa (register + verify email + login/logout + `/users/me`). Frontend: 
 - `ActivityMap`: polyline GPS, marcadores inicio/fin, punto móvil sincronizado con gráficas.
 - `ActivityCharts`: altitud, velocidad, FC, cadencia, potencia; crosshair sincronizado; tooltip con distancia.
 
-**Tests: 77 pasando.**
+### Fase 5 — Completa ✅
+- `GET /stats/summary`: total km, horas, actividades, desnivel.
+- `GET /stats/calendar?year=YYYY`: heatmap por día (count + km).
+- `GET /stats/timeline?bucket=month|year`: evolución mensual/anual de km/horas.
+- `schemas/stats.py`: `StatsSummary`, `CalendarDay`, `CalendarResponse`, `TimelineEntry`.
+- `StatsPage`: tarjetas resumen, heatmap estilo GitHub con selector de año, gráfica de barras mensual (distancia/tiempo).
+- Nav en Layout con enlaces Actividades / Estadísticas.
 
----
-
-## Trabajo pendiente
-
-### Fase 5 — Dashboard de estadísticas
-- `GET /stats/summary`: total km, horas, actividades, desnivel
-- `GET /stats/calendar?year=YYYY`: heatmap tipo GitHub
-- `GET /stats/timeline?bucket=month`: evolución mensual de km/horas
-- Frontend: página Stats con heatmap calendario + gráficos de tendencia
+**Tests: 86 pasando.**
 
 ### Mejoras conocidas / bugs
 - Los nombres de actividad de las 114 actividades importadas en bulk son `NULL` (el geocoding en bulk_import tarda mucho por el rate-limit de Nominatim; considerar job asíncrono o comando separado de "enriquecer nombres").
