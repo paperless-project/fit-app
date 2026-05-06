@@ -98,12 +98,23 @@ CREATE TABLE laps (
 - `379c3241c147` — initial_schema (tablas + extensiones + índices GiST)
 - `6bf7f63a1065` — add_activity_name
 - `472807ab1cee` — add_notes_to_activities
+- `5a37abab0ca1` — add_oauth_account_table (tabla OAuth para login con Google)
 
 ## 3. API REST implementada
 
 ```
-# Auth
-POST /auth/register, /auth/jwt/login, /auth/jwt/logout, /auth/verify
+# Auth — credenciales
+POST /auth/register
+POST /auth/jwt/login              login estándar (token 8 h)
+POST /auth/jwt-remember/login     login "recordarme" (token 15 días)
+POST /auth/jwt/logout
+POST /auth/verify
+
+# Auth — Google OAuth2
+GET  /auth/google/authorize       devuelve JSON {authorization_url}; requiere credentials:include para CSRF cookie
+GET  /auth/google/callback        callback del servidor: valida CSRF, comprueba usuario, emite JWT o redirige a /register
+
+# Perfil de usuario
 GET|PATCH /users/me
 
 # Cuenta de usuario
@@ -140,8 +151,9 @@ GET /stats/timeline?bucket=month|year
 | **7. Enriquecimiento asíncrono** | BackgroundTasks geocoding, CLI enrich_names.py | ✅ Completa |
 | **Mejoras** | JWT 256 bits / 8 h, paginación GET /activities/, GET /activities/sports | ✅ Completa |
 | **8. Gestión de cuenta** | PATCH /users/me/password, DELETE /users/me, DELETE /activities/{id}, AccountPage | ✅ Completa |
+| **Mejoras login** | Checkbox "Recordarme" (15 días), login con Google OAuth2 (no auto-registro), OAuthCallbackPage | ✅ Completa |
 
-**131 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
+**147 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
 
 ## 5. Flujo de datos principal
 

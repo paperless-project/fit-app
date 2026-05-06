@@ -50,10 +50,16 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 - **Mock de geocoding**: `patch("fitapp.services.activity_service.generate_activity_name")`
 - **Mock de background task enrich**: `patch("fitapp.routers.activities._enrich_name_bg")` — parchear donde se USA (el router), no donde está definida
 - Puerto 1025 del host ocupado → Mailpit usa `1026:1025`
+- **`httpx-oauth` no persiste tras rebuild** — está en `pyproject.toml` pero Docker cachea la capa y no lo reinstala; hacer `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"` tras cada rebuild
+- **FK `oauth_account.user_id` → `"users.id"`** — fastapi-users genera por defecto FK a `"user.id"`; hay que sobreescribir con `@declared_attr` porque nuestro `__tablename__ = "users"`
+- **`on_after_register` con OAuth**: guardar `if not user.is_verified:` antes de llamar `request_verify()` — los usuarios OAuth llegan con `is_verified=True` y fastapi-users lanza `UserAlreadyVerified` si se intenta verificarlos
+- **`get_access_token` hace HTTP real en tests** — parchear `google_oauth_client.get_access_token` con `AsyncMock` en todos los tests de callback, no solo en los del flujo completo
+- **CSRF cookie cross-origin**: el fetch a `/auth/google/authorize` debe llevar `credentials: 'include'` o el navegador descarta la `Set-Cookie` y el callback falla con `OAUTH_CSRF_ERROR`
+- **`csrf_token_cookie_secure=False`** en `get_oauth_router()` — obligatorio en HTTP dev; sin ello la cookie no se envía en la petición de callback
 
 ---
 
-## Estado actual (2026-05-06) — Fase 8 completa — 131 tests
+## Estado actual (2026-05-06) — Mejoras login completas — 147 tests
 
 ### Fase 1 ✅ — Auth
 Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout, authStore (Zustand).
@@ -103,14 +109,22 @@ Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, Regis
 - Frontend: email del usuario en navbar como enlace a `/account`
 - Router `account.py` registrado antes del router fastapi-users para que `DELETE /users/me` no colisione con `DELETE /users/{id}`
 
-### Mejoras adicionales ✅
+### Mejoras login ✅
 - **JWT_SECRET**: 256 bits (64 hex), generado con `openssl rand -hex 32`; lifetime 8 h (`JWT_LIFETIME_SECONDS=28800`)
 - **Paginación**: `GET /activities/` devuelve `{items, total, page, size, pages}`; `?page=1&size=20` (máx 100). `GET /activities/sports` para deportes distintos del usuario. Frontend: componente `Pagination` con prev/next y numeración.
+- **Recordarme (15 días)**: checkbox en LoginPage → llama a `/auth/jwt-remember/login`; segundo `AuthenticationBackend` (`jwt-remember`, 15 días)
+- **Login con Google OAuth2**: botón en LoginPage → fetch `/auth/google/authorize` (con `credentials: include`) → redirige al navegador a Google
+  - Callback personalizado `routers/google_callback.py`: valida CSRF, comprueba si el usuario ya existe (por OAuth account o email), si no existe → redirige a `/register?google_error=…`; si existe → genera JWT y redirige a `/auth/google/callback?access_token=…`
+  - `_GoogleOAuth2`: subclase que sobreescribe `get_id_email` para usar el endpoint OpenID estándar (`/oauth2/v2/userinfo`) en lugar de la People API (que requiere activación aparte en Google Console)
+  - Tabla `oauth_account` (migración `5a37abab0ca1`); FK apunta a `"users.id"` (no al default `"user.id"` de fastapi-users)
+  - `OAuthCallbackPage`: captura `?access_token=`, guarda en authStore, redirige a `/activities`
+  - `RegisterPage`: muestra banner ámbar con `?google_error=` si el perfil Google no tiene cuenta
 
 ---
 
 ## Bugs conocidos / trabajo pendiente
 - Las 114 actividades importadas en bulk tienen `name IS NULL` → ejecutar `docker compose exec api python enrich_names.py --all-users` (tarda ~15-20 min por rate-limit Nominatim)
+- `httpx-oauth` requiere instalación manual tras cada rebuild del contenedor API: `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"` (la capa de imagen no lo instala por caché de Docker; está en `pyproject.toml` pero el build no lo detecta como cambio)
 
 ---
 

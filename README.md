@@ -25,12 +25,17 @@ No es necesario tener Python ni Node instalados localmente.
 ```bash
 # 1. Variables de entorno
 cp .env.example .env
+# Editar .env: añadir GOOGLE_OAUTH_CLIENT_ID y GOOGLE_OAUTH_CLIENT_SECRET
+# (obtener en console.cloud.google.com → APIs & Services → Credentials)
 
 # 2. Levantar el stack completo
 docker compose up --build -d
 
 # 3. Aplicar migraciones
 docker compose exec api alembic upgrade head
+
+# 4. Instalar httpx-oauth (dependencia Google OAuth, tras cada rebuild)
+docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"
 ```
 
 ## URLs locales
@@ -62,7 +67,7 @@ docker compose exec api python enrich_names.py --all-users
 
 ```bash
 docker compose exec api pytest
-# → 131 tests pasando
+# → 147 tests pasando
 ```
 
 ## Desarrollo
@@ -92,24 +97,27 @@ fit-app/
 │   └── status.md                Estado de fases y trabajo pendiente
 ├── apps/api/                    Backend FastAPI
 │   ├── src/fitapp/
-│   │   ├── routers/             activities.py, stats.py
+│   │   ├── routers/             activities.py, stats.py, account.py, google_callback.py
 │   │   ├── services/            fit_parser.py, fit_repair.py, geocoding.py, activity_service.py
-│   │   ├── models/              activity.py, user.py
+│   │   ├── models/              activity.py, user.py (+ OAuthAccount)
 │   │   └── schemas/             activity.py, stats.py
-│   ├── alembic/versions/        Migraciones Alembic
-│   ├── tests/                   Suite pytest (119 tests)
-│   ├── scripts/bulk_import.py   CLI importación masiva de .fit
+│   ├── alembic/versions/        4 migraciones Alembic
+│   ├── tests/                   Suite pytest (147 tests)
+│   ├── bulk_import.py           CLI importación masiva de .fit
 │   └── enrich_names.py          CLI geocoding inverso de nombres
 └── apps/web/                    Frontend React + Vite
     └── src/
-        ├── pages/               ActivitiesPage, ActivityDetailPage, StatsPage, AccountPage, Auth*
+        ├── pages/               ActivitiesPage, ActivityDetailPage, StatsPage, AccountPage,
+        │                        LoginPage, RegisterPage, VerifyPage, OAuthCallbackPage
         ├── components/          ActivityMap, ActivityCharts, Layout
-        └── lib/                 activities.ts, stats.ts, account.ts, api.ts
+        └── lib/                 activities.ts, stats.ts, account.ts, auth.ts, api.ts
 ```
 
 ## Funcionalidades implementadas
 
 - **Auth**: registro, verificación email, login/logout JWT (8 h), perfil
+- **Recordarme**: checkbox en login → sesión de 15 días (endpoint `/auth/jwt-remember/login`)
+- **Login con Google**: OAuth2 via Google — solo para usuarios ya registrados con ese email; perfiles desconocidos redirigen a `/register` con mensaje explicativo
 - **Upload**: drag-and-drop `.fit`, deduplicación por hash, reparación automática de ficheros corruptos
 - **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV completo
 - **Detalle**: mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX

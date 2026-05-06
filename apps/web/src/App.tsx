@@ -11,6 +11,7 @@ import ActivitiesPage from '@/pages/ActivitiesPage'
 import ActivityDetailPage from '@/pages/ActivityDetailPage';
 import StatsPage from '@/pages/StatsPage';
 import AccountPage from '@/pages/AccountPage';
+import OAuthCallbackPage from '@/pages/OAuthCallbackPage';
 
 export default function App() {
   const { token, setUser, setInitialized, logout } = useAuthStore();
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/verify" element={<VerifyPage />} />
+      <Route path="/auth/google/callback" element={<OAuthCallbackPage />} />
 
       {/* Rutas privadas */}
       <Route element={<PrivateRoute />}>

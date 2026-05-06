@@ -34,6 +34,10 @@ services:
       JWT_LIFETIME_SECONDS: ${JWT_LIFETIME_SECONDS:-3600}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       ACTIVITIES_DIR: ${ACTIVITIES_DIR:-/activities}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      API_URL: ${API_URL:-http://localhost:8000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       PYTHONPATH: /app/src
     ports:
       - "8000:8000"
@@ -49,7 +53,7 @@ services:
     depends_on:
       - api
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_API_URL: ${API_URL:-http://localhost:8000}
     ports:
       - "5173:5173"
 

@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { registerApi } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 
 export default function RegisterPage() {
+  const [searchParams] = useSearchParams();
+  const googleError = searchParams.get('google_error');
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -42,6 +45,12 @@ export default function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50">
       <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="mb-6 text-center text-2xl font-semibold text-slate-800">Crear cuenta</h1>
+
+        {googleError && (
+          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {googleError}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

@@ -5,9 +5,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fitapp import __version__
-from fitapp.auth.users import auth_backend, fastapi_users
+from fitapp.auth.users import auth_backend, auth_backend_remember, fastapi_users, google_oauth_client
 from fitapp.config import settings
-from fitapp.routers import account, activities, stats
+from fitapp.routers import account, activities, google_callback, stats
 from fitapp.schemas import UserCreate, UserRead, UserUpdate
 
 app = FastAPI(title="fit-app API", version=__version__)
@@ -31,10 +31,28 @@ app.include_router(
     fastapi_users.get_auth_router(auth_backend), prefix="/auth/jwt", tags=["auth"]
 )
 app.include_router(
+    fastapi_users.get_auth_router(auth_backend_remember), prefix="/auth/jwt-remember", tags=["auth"]
+)
+app.include_router(
     fastapi_users.get_register_router(UserRead, UserCreate), prefix="/auth", tags=["auth"]
 )
 app.include_router(
     fastapi_users.get_verify_router(UserRead), prefix="/auth", tags=["auth"]
+)
+# Callback personalizado: registrado ANTES del router de fastapi-users para
+# que tome precedencia sobre /auth/google/callback y redirija al frontend con el JWT.
+app.include_router(google_callback.router, tags=["auth"])
+app.include_router(
+    fastapi_users.get_oauth_router(
+        google_oauth_client,
+        auth_backend,
+        settings.jwt_secret,
+        redirect_url=f"{settings.api_url}/auth/google/callback",
+        is_verified_by_default=True,
+        csrf_token_cookie_secure=False,   # HTTP en desarrollo
+    ),
+    prefix="/auth/google",
+    tags=["auth"],
 )
 # Cuenta de usuario (antes del router de fastapi-users para que /me literal
 # tenga prioridad sobre /{id} parametrizado)

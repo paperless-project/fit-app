@@ -4,9 +4,14 @@ import { ApiError } from './api';
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 // fastapi-users login uses OAuth2 form data (username + password)
-export async function loginApi(email: string, password: string): Promise<LoginResponse> {
+export async function loginApi(
+  email: string,
+  password: string,
+  remember = false,
+): Promise<LoginResponse> {
+  const endpoint = remember ? '/auth/jwt-remember/login' : '/auth/jwt/login';
   const body = new URLSearchParams({ username: email, password });
-  const res = await fetch(`${BASE_URL}/auth/jwt/login`, {
+  const res = await fetch(`${BASE_URL}${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

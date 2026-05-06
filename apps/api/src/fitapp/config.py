@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     smtp_from: str = "noreply@fit-app.local"
     smtp_starttls: bool = False
 
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    api_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:5173"
 
     cors_origins: str = "http://localhost:5173"

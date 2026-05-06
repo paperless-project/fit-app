@@ -27,7 +27,7 @@ _TEST_ASYNC_URL = settings.async_database_url.rsplit("/", 1)[0] + f"/{_TEST_DB}"
 _engine = create_async_engine(_TEST_ASYNC_URL, echo=False, poolclass=NullPool)
 _SessionFactory = async_sessionmaker(_engine, expire_on_commit=False)
 
-_APP_TABLES = ["records", "laps", "activities", "users"]
+_APP_TABLES = ["records", "laps", "activities", "oauth_account", "users"]
 
 
 # ── Creacion del schema (una vez por sesion de pytest) ──────────────────────
