@@ -1,5 +1,5 @@
 import { api, downloadFile, ApiError } from './api';
-import type { Activity, ActivityDetail } from '@/types/activity';
+import type { Activity, ActivityDetail, ActivityPage } from '@/types/activity';
 
 export interface ActivityFilters {
   q?: string;
@@ -14,18 +14,27 @@ export interface ActivityPatch {
   notes?: string | null;
 }
 
-function buildQuery(filters: ActivityFilters): string {
+function buildQuery(filters: ActivityFilters, extra?: Record<string, string>): string {
   const params = new URLSearchParams();
   if (filters.q) params.set('q', filters.q);
   if (filters.sport) params.set('sport', filters.sport);
   if (filters.date_from) params.set('date_from', filters.date_from);
   if (filters.date_to) params.set('date_to', filters.date_to);
+  if (extra) Object.entries(extra).forEach(([k, v]) => params.set(k, v));
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
 
-export async function getActivitiesApi(filters: ActivityFilters = {}): Promise<Activity[]> {
-  return api<Activity[]>(`/activities/${buildQuery(filters)}`);
+export async function getActivitiesApi(
+  filters: ActivityFilters = {},
+  page = 1,
+  size = 20,
+): Promise<ActivityPage> {
+  return api<ActivityPage>(`/activities/${buildQuery(filters, { page: String(page), size: String(size) })}`);
+}
+
+export async function getActivitySportsApi(): Promise<string[]> {
+  return api<string[]>('/activities/sports');
 }
 
 export async function getActivityDetailApi(id: string): Promise<ActivityDetail> {

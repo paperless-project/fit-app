@@ -46,3 +46,11 @@ export interface ActivityDetail extends Activity {
   records: RecordPoint[];
   laps: LapPoint[];
 }
+
+export interface ActivityPage {
+  items: Activity[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}

@@ -16,7 +16,10 @@ async def test_list_activities_returns_empty_for_new_user(client: AsyncClient) -
 
     res = await client.get("/activities/", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 200
-    assert res.json() == []
+    body = res.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+    assert body["page"] == 1
 
 
 async def test_list_activities_returns_uploaded(client: AsyncClient) -> None:
@@ -33,9 +36,10 @@ async def test_list_activities_returns_uploaded(client: AsyncClient) -> None:
 
     res = await client.get("/activities/", headers=headers)
     assert res.status_code == 200
-    activities = res.json()
-    assert len(activities) == 1
-    assert activities[0]["file_name"] == "240714102315.fit"
+    body = res.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    assert body["items"][0]["file_name"] == "240714102315.fit"
 
 
 async def test_list_activities_only_own(client: AsyncClient) -> None:
@@ -53,7 +57,7 @@ async def test_list_activities_only_own(client: AsyncClient) -> None:
 
     res = await client.get("/activities/", headers={"Authorization": f"Bearer {token_b}"})
     assert res.status_code == 200
-    assert res.json() == []
+    assert res.json()["total"] == 0
 
 
 async def test_list_activities_requires_auth(client: AsyncClient) -> None:

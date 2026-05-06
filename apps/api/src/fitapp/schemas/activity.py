@@ -64,3 +64,11 @@ class LapOut(BaseModel):
 class ActivityDetailOut(ActivityOut):
     records: list[RecordOut] = []
     laps: list[LapOut] = []
+
+
+class ActivityPage(BaseModel):
+    items: list[ActivityOut]
+    total: int
+    page: int
+    size: int
+    pages: int

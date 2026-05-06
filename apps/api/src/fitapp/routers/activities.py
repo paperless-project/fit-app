@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
@@ -19,7 +20,7 @@ from fitapp.auth.users import current_active_user
 from fitapp.db import get_session
 from fitapp.models.activity import Activity, Lap, Record
 from fitapp.models.user import User
-from fitapp.schemas.activity import ActivityDetailOut, ActivityOut, ActivityPatch, LapOut, RecordOut
+from fitapp.schemas.activity import ActivityDetailOut, ActivityOut, ActivityPage, ActivityPatch, LapOut, RecordOut
 from fitapp.services.activity_service import _enrich_name_bg, enrich_activity_name, persist_activity
 from fitapp.services.fit_parser import parse_fit_safe
 
@@ -39,18 +40,25 @@ def _filter_stmt(stmt, user_id, q, sport, date_from, date_to):
     return stmt
 
 
-@router.get("/", response_model=list[ActivityOut])
+@router.get("/", response_model=ActivityPage)
 async def list_activities(
     q: str | None = Query(None, description="Buscar por nombre"),
     sport: str | None = Query(None, description="Filtrar por deporte"),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_session),
-) -> list[Activity]:
+) -> ActivityPage:
     stmt = _filter_stmt(select(Activity), user.id, q, sport, date_from, date_to)
-    result = await db.execute(stmt.order_by(Activity.started_at.desc()))
-    return list(result.scalars())
+
+    total: int = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    offset = (page - 1) * size
+    items = list((await db.execute(stmt.order_by(Activity.started_at.desc()).offset(offset).limit(size))).scalars())
+    pages = max(1, math.ceil(total / size)) if total else 1
+
+    return ActivityPage(items=items, total=total, page=page, size=size, pages=pages)
 
 
 @router.post("/upload", response_model=ActivityOut, status_code=201)
@@ -96,6 +104,22 @@ async def trigger_enrich_names(
     for activity_id in ids:
         background_tasks.add_task(_enrich_name_bg, activity_id)
     return {"queued": len(ids)}
+
+
+# IMPORTANTE: /sports y /export/csv deben estar registrados antes de /{activity_id}
+@router.get("/sports")
+async def list_sports(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[str]:
+    """Deportes distintos del usuario, para poblar el desplegable de filtros."""
+    result = await db.execute(
+        select(Activity.sport)
+        .where(Activity.user_id == user.id, Activity.sport.isnot(None))
+        .distinct()
+        .order_by(Activity.sport)
+    )
+    return [row[0] for row in result.all()]
 
 
 # IMPORTANTE: /export/csv debe estar registrado antes de /{activity_id}

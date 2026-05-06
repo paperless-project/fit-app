@@ -3,12 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getActivitiesApi,
+  getActivitySportsApi,
   uploadActivityApi,
   downloadCsvApi,
   ApiError,
   type ActivityFilters,
 } from '@/lib/activities';
 import type { Activity } from '@/types/activity';
+
+const PAGE_SIZE = 20;
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -127,6 +130,67 @@ function FilterBar({
   );
 }
 
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+function Pagination({
+  page,
+  pages,
+  total,
+  size,
+  onChange,
+}: {
+  page: number;
+  pages: number;
+  total: number;
+  size: number;
+  onChange: (page: number) => void;
+}) {
+  if (total === 0) return null;
+
+  const from = (page - 1) * size + 1;
+  const to = Math.min(page * size, total);
+
+  // Mostrar hasta 5 números de página centrados en la actual
+  const delta = 2;
+  const start = Math.max(1, page - delta);
+  const end = Math.min(pages, page + delta);
+  const pageNumbers = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+
+  const btn = (label: React.ReactNode, target: number, disabled: boolean, active = false) => (
+    <button
+      key={String(label)}
+      onClick={() => !disabled && onChange(target)}
+      disabled={disabled}
+      className={`min-w-[2rem] rounded px-2 py-1 text-sm transition-colors
+        ${active
+          ? 'bg-blue-600 font-semibold text-white'
+          : disabled
+            ? 'cursor-default text-slate-300'
+            : 'text-slate-600 hover:bg-slate-100'
+        }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex items-center justify-between text-sm">
+      <span className="text-slate-500">
+        {from}–{to} de {total} actividades
+      </span>
+      <div className="flex items-center gap-0.5">
+        {btn('«', 1, page <= 1)}
+        {btn('‹', page - 1, page <= 1)}
+        {start > 1 && <span className="px-1 text-slate-400">…</span>}
+        {pageNumbers.map((n) => btn(n, n, false, n === page))}
+        {end < pages && <span className="px-1 text-slate-400">…</span>}
+        {btn('›', page + 1, page >= pages)}
+        {btn('»', pages, page >= pages)}
+      </div>
+    </div>
+  );
+}
+
 // ── Upload modal ──────────────────────────────────────────────────────────────
 
 function UploadModal({
@@ -146,6 +210,7 @@ function UploadModal({
     mutationFn: (file: File) => uploadActivityApi(file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['activities'] });
+      queryClient.invalidateQueries({ queryKey: ['activity-sports'] });
       onSuccess();
     },
     onError: (err: unknown) => {
@@ -231,17 +296,31 @@ function ActivityRow({ activity }: { activity: Activity }) {
 export default function ActivitiesPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [filters, setFilters] = useState<ActivityFilters>({});
+  const [page, setPage] = useState(1);
 
-  const { data: activities, isLoading, isError } = useQuery({
-    queryKey: ['activities', filters],
-    queryFn: () => getActivitiesApi(filters),
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['activities', filters, page],
+    queryFn: () => getActivitiesApi(filters, page, PAGE_SIZE),
   });
 
-  const sports = [...new Set((activities ?? []).map((a) => a.sport).filter(Boolean) as string[])].sort();
+  const { data: sports = [] } = useQuery({
+    queryKey: ['activity-sports'],
+    queryFn: getActivitySportsApi,
+    staleTime: 60_000,
+  });
+
+  function handleFilterChange(f: ActivityFilters) {
+    setFilters(f);
+    setPage(1);
+  }
 
   async function handleExportCsv() {
     await downloadCsvApi(filters);
   }
+
+  const activities = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const pages = data?.pages ?? 1;
 
   return (
     <div className="space-y-4">
@@ -255,37 +334,47 @@ export default function ActivitiesPage() {
         </button>
       </div>
 
-      <FilterBar filters={filters} sports={sports} onChange={setFilters} onExportCsv={handleExportCsv} />
+      <FilterBar filters={filters} sports={sports} onChange={handleFilterChange} onExportCsv={handleExportCsv} />
 
       {isLoading && <p className="text-sm text-slate-500">Cargando actividades…</p>}
       {isError && <p className="text-sm text-red-600">Error al cargar las actividades.</p>}
 
-      {!isLoading && !isError && activities?.length === 0 && (
+      {!isLoading && !isError && total === 0 && (
         <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center">
           <p className="text-slate-500">No hay actividades con los filtros aplicados.</p>
         </div>
       )}
 
-      {!isLoading && !isError && activities && activities.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Fecha</th>
-                <th className="px-4 py-3">Actividad</th>
-                <th className="px-4 py-3">Distancia</th>
-                <th className="px-4 py-3">Duración</th>
-                <th className="px-4 py-3">Desnivel</th>
-                <th className="px-4 py-3">Vel. media</th>
-                <th className="px-4 py-3">FC media</th>
-                <th className="px-4 py-3">Calorías</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activities.map((a) => <ActivityRow key={a.id} activity={a} />)}
-            </tbody>
-          </table>
-        </div>
+      {!isLoading && !isError && activities.length > 0 && (
+        <>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Fecha</th>
+                  <th className="px-4 py-3">Actividad</th>
+                  <th className="px-4 py-3">Distancia</th>
+                  <th className="px-4 py-3">Duración</th>
+                  <th className="px-4 py-3">Desnivel</th>
+                  <th className="px-4 py-3">Vel. media</th>
+                  <th className="px-4 py-3">FC media</th>
+                  <th className="px-4 py-3">Calorías</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activities.map((a) => <ActivityRow key={a.id} activity={a} />)}
+              </tbody>
+            </table>
+          </div>
+
+          <Pagination
+            page={page}
+            pages={pages}
+            total={total}
+            size={PAGE_SIZE}
+            onChange={setPage}
+          />
+        </>
       )}
 
       {showUpload && (
