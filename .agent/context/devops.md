@@ -37,10 +37,8 @@ docker compose exec api alembic revision --autogenerate -m "descripcion"
 # Tests
 docker compose exec api pytest
 
-# Bulk import (EJECUTAR DENTRO del contenedor con PYTHONPATH)
-# ⚠️ scripts/ NO está en el volumen /app — copiar al contenedor o añadir al Dockerfile
-docker compose cp scripts/bulk_import.py api:/app/bulk_import.py
-docker compose exec api bash -c "cd /app && PYTHONPATH=/app/src python bulk_import.py --user-email EMAIL --path /activities"
+# Bulk import (apps/api/bulk_import.py → /app/bulk_import.py en el contenedor)
+docker compose exec api python bulk_import.py --user-email EMAIL --path /activities
 ```
 
 ## Gotcha crítico venv

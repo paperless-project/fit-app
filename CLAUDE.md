@@ -120,8 +120,8 @@ docker compose exec api alembic revision --autogenerate -m "descripcion"
 # Rebuild completo (si cambia pyproject.toml)
 docker compose down && docker volume rm fit-app_api_venv && docker compose up --build -d
 
-# Importar Activities/ (ejecutar DENTRO del contenedor api con PYTHONPATH correcto)
-docker compose exec api bash -c "cd /app && PYTHONPATH=/app/src python bulk_import.py --user-email EMAIL --path /activities"
+# Importar Activities/ (el script vive en apps/api/bulk_import.py → /app/bulk_import.py en el contenedor)
+docker compose exec api python bulk_import.py --user-email EMAIL --path /activities
 ```
 
 ## URLs locales
