@@ -53,7 +53,7 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 
 ---
 
-## Estado actual (2026-05-06) — Fase 7 + paginación — 119 tests
+## Estado actual (2026-05-06) — Fase 8 completa — 131 tests
 
 ### Fase 1 ✅ — Auth
 Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout, authStore (Zustand).
@@ -93,6 +93,15 @@ Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, Regis
 - `persist_activity()`: ya no bloquea con geocoding; respuesta inmediata
 - `POST /activities/enrich-names`: encola todas las actividades con `name IS NULL` del usuario
 - `apps/api/enrich_names.py` (CLI): `python enrich_names.py --user-email EMAIL [--force]` o `--all-users`
+
+### Fase 8 ✅ — Gestión de cuenta
+- `PATCH /users/me/password`: cambio de contraseña (valida actual, mín 8 chars nueva)
+- `DELETE /users/me`: borrado de cuenta con `{ confirm: true }` (cascade activities)
+- `DELETE /activities/{id}`: borrado de actividad (404 si no existe, 403 si no es propietario, 204 OK)
+- Frontend: `AccountPage` (`/account`) con formulario de cambio de contraseña + zona de peligro (modal con "BORRAR")
+- Frontend: botón "Borrar" en `ActivityDetailPage` con modal de confirmación
+- Frontend: email del usuario en navbar como enlace a `/account`
+- Router `account.py` registrado antes del router fastapi-users para que `DELETE /users/me` no colisione con `DELETE /users/{id}`
 
 ### Mejoras adicionales ✅
 - **JWT_SECRET**: 256 bits (64 hex), generado con `openssl rand -hex 32`; lifetime 8 h (`JWT_LIFETIME_SECONDS=28800`)

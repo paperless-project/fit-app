@@ -106,6 +106,10 @@ CREATE TABLE laps (
 POST /auth/register, /auth/jwt/login, /auth/jwt/logout, /auth/verify
 GET|PATCH /users/me
 
+# Cuenta de usuario
+PATCH  /users/me/password         cambio de contraseña; 400 si actual errónea; 422 si nueva < 8 chars
+DELETE /users/me                  borrado de cuenta con {confirm:true}; cascade activities
+
 # Actividades
 GET    /activities/               paginado {items,total,page,size,pages}; filtros: q,sport,date_from,date_to,page,size
 GET    /activities/sports         lista deportes distintos del usuario
@@ -114,6 +118,7 @@ POST   /activities/enrich-names   encola geocoding para actividades con name IS 
 GET    /activities/export/csv     CSV con mismos filtros (sin paginación, exporta todo)
 GET    /activities/{id}           detalle + records + laps
 PATCH  /activities/{id}           edición parcial: name, sport, notes
+DELETE /activities/{id}           borrado; 403 si no es propietario; 404 si no existe
 GET    /activities/{id}/export/gpx  GPX 1.1 con extensiones Garmin
 
 # Estadísticas
@@ -134,8 +139,9 @@ GET /stats/timeline?bucket=month|year
 | **6. Filtros + edición + exportación** | filtros, PATCH, CSV, GPX | ✅ Completa |
 | **7. Enriquecimiento asíncrono** | BackgroundTasks geocoding, CLI enrich_names.py | ✅ Completa |
 | **Mejoras** | JWT 256 bits / 8 h, paginación GET /activities/, GET /activities/sports | ✅ Completa |
+| **8. Gestión de cuenta** | PATCH /users/me/password, DELETE /users/me, DELETE /activities/{id}, AccountPage | ✅ Completa |
 
-**119 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
+**131 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
 
 ## 5. Flujo de datos principal
 

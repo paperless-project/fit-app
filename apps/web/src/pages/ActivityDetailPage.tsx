@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getActivityDetailApi, patchActivityApi, downloadGpxApi } from '@/lib/activities';
+import { getActivityDetailApi, patchActivityApi, downloadGpxApi, deleteActivityApi } from '@/lib/activities';
 import ActivityMap from '@/components/ActivityMap';
 import ActivityCharts from '@/components/ActivityCharts';
 import type { ActivityDetail, LapPoint } from '@/types/activity';
@@ -72,7 +72,7 @@ function EditModal({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/40">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-slate-800">Editar actividad</h3>
@@ -135,6 +135,53 @@ function EditModal({
   );
 }
 
+// ── Delete modal ──────────────────────────────────────────────────────────────
+
+function DeleteActivityModal({
+  activityId,
+  onClose,
+}: {
+  activityId: string;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: () => deleteActivityApi(activityId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['activities'] });
+      navigate('/activities', { replace: true });
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+        <h3 className="mb-3 text-lg font-semibold text-slate-800">Borrar actividad</h3>
+        <p className="mb-5 text-sm text-slate-600">
+          ¿Seguro que quieres borrar esta actividad? Esta acción no se puede deshacer.
+        </p>
+        {mutation.isError && (
+          <p className="mb-3 text-sm text-red-600">Error al borrar la actividad.</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100">
+            Cancelar
+          </button>
+          <button
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {mutation.isPending ? 'Borrando…' : 'Borrar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Laps table ────────────────────────────────────────────────────────────────
 
 function LapsTable({ laps }: { laps: LapPoint[] }) {
@@ -179,6 +226,7 @@ export default function ActivityDetailPage() {
   const navigate = useNavigate();
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [showEdit, setShowEdit] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['activity', id],
@@ -225,6 +273,12 @@ export default function ActivityDetailPage() {
           >
             Editar
           </button>
+          <button
+            onClick={() => setShowDelete(true)}
+            className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+          >
+            Borrar
+          </button>
         </div>
       </div>
 
@@ -244,6 +298,9 @@ export default function ActivityDetailPage() {
       <LapsTable laps={data.laps} />
 
       {showEdit && <EditModal activity={data} onClose={() => setShowEdit(false)} />}
+      {showDelete && (
+        <DeleteActivityModal activityId={data.id} onClose={() => setShowDelete(false)} />
+      )}
     </div>
   );
 }

@@ -30,6 +30,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const text = await response.text();
     throw new ApiError(text || response.statusText, response.status);
   }
+  if (response.status === 204 || response.headers.get('content-length') === '0') {
+    return undefined as unknown as T;
+  }
   return response.json() as Promise<T>;
 }
 

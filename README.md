@@ -62,7 +62,7 @@ docker compose exec api python enrich_names.py --all-users
 
 ```bash
 docker compose exec api pytest
-# → 119 tests pasando
+# → 131 tests pasando
 ```
 
 ## Desarrollo
@@ -102,9 +102,9 @@ fit-app/
 │   └── enrich_names.py          CLI geocoding inverso de nombres
 └── apps/web/                    Frontend React + Vite
     └── src/
-        ├── pages/               ActivitiesPage, ActivityDetailPage, StatsPage, Auth*
+        ├── pages/               ActivitiesPage, ActivityDetailPage, StatsPage, AccountPage, Auth*
         ├── components/          ActivityMap, ActivityCharts, Layout
-        └── lib/                 activities.ts, stats.ts, api.ts
+        └── lib/                 activities.ts, stats.ts, account.ts, api.ts
 ```
 
 ## Funcionalidades implementadas
@@ -113,8 +113,9 @@ fit-app/
 - **Upload**: drag-and-drop `.fit`, deduplicación por hash, reparación automática de ficheros corruptos
 - **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV completo
 - **Detalle**: mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
-- **Edición**: nombre, deporte y notas de cada actividad
+- **Edición**: nombre, deporte y notas de cada actividad; borrado individual con confirmación
 - **Nombres automáticos**: geocoding inverso Nominatim asíncrono — genera nombres tipo "Castillo de Olite desde Tafalla"
 - **Estadísticas**: totales, calendario heatmap estilo GitHub, evolución mensual
+- **Gestión de cuenta** (`/account`): cambio de contraseña, borrado de cuenta con cascada de actividades
 
 Contexto técnico completo en [`CLAUDE.md`](CLAUDE.md) y [`doc/PLAN.md`](doc/PLAN.md).

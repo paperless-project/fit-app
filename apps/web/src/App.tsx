@@ -10,6 +10,7 @@ import VerifyPage from '@/pages/VerifyPage';
 import ActivitiesPage from '@/pages/ActivitiesPage'
 import ActivityDetailPage from '@/pages/ActivityDetailPage';
 import StatsPage from '@/pages/StatsPage';
+import AccountPage from '@/pages/AccountPage';
 
 export default function App() {
   const { token, setUser, setInitialized, logout } = useAuthStore();
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/activities" element={<ActivitiesPage />} />
           <Route path="/activities/:id" element={<ActivityDetailPage />} />
           <Route path="/stats" element={<StatsPage />} />
+          <Route path="/account" element={<AccountPage />} />
           <Route path="/" element={<Navigate to="/activities" replace />} />
         </Route>
       </Route>

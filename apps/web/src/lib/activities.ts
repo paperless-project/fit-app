@@ -58,6 +58,10 @@ export async function downloadGpxApi(id: string, filename: string): Promise<void
   return downloadFile(`/activities/${id}/export/gpx`, filename);
 }
 
+export async function deleteActivityApi(id: string): Promise<void> {
+  await api<void>(`/activities/${id}`, { method: 'DELETE' });
+}
+
 export async function downloadCsvApi(filters: ActivityFilters = {}): Promise<void> {
   return downloadFile(`/activities/export/csv${buildQuery(filters)}`, 'actividades.csv');
 }

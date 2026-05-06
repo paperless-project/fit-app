@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fitapp import __version__
 from fitapp.auth.users import auth_backend, fastapi_users
 from fitapp.config import settings
-from fitapp.routers import activities, stats
+from fitapp.routers import account, activities, stats
 from fitapp.schemas import UserCreate, UserRead, UserUpdate
 
 app = FastAPI(title="fit-app API", version=__version__)
@@ -36,6 +36,9 @@ app.include_router(
 app.include_router(
     fastapi_users.get_verify_router(UserRead), prefix="/auth", tags=["auth"]
 )
+# Cuenta de usuario (antes del router de fastapi-users para que /me literal
+# tenga prioridad sobre /{id} parametrizado)
+app.include_router(account.router)
 app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate), prefix="/users", tags=["users"]
 )

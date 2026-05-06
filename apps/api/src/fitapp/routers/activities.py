@@ -226,6 +226,22 @@ async def get_activity_detail(
     )
 
 
+@router.delete("/{activity_id}", status_code=204)
+async def delete_activity(
+    activity_id: uuid.UUID,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    result = await db.execute(select(Activity).where(Activity.id == activity_id))
+    activity = result.scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="ACTIVITY_NOT_FOUND")
+    if activity.user_id != user.id:
+        raise HTTPException(status_code=403, detail="FORBIDDEN")
+    await db.delete(activity)
+    await db.commit()
+
+
 @router.patch("/{activity_id}", response_model=ActivityOut)
 async def update_activity(
     activity_id: uuid.UUID,

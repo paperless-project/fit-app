@@ -28,7 +28,9 @@ export default function Layout() {
             </Link>
           </nav>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-500">{user?.email}</span>
+            <Link to="/account" className="text-sm text-slate-500 hover:text-slate-800">
+              {user?.email}
+            </Link>
             <button
               onClick={handleLogout}
               className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
