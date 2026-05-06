@@ -32,3 +32,23 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return response.json() as Promise<T>;
 }
+
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = localStorage.getItem('access_token');
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${BASE_URL}${path}`, { headers });
+  if (response.status === 401) {
+    localStorage.removeItem('access_token');
+    window.location.href = '/login';
+    throw new ApiError('Sesión expirada', 401);
+  }
+  if (!response.ok) throw new ApiError(response.statusText, response.status);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

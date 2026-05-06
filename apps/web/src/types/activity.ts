@@ -3,6 +3,7 @@ export interface Activity {
   file_name: string;
   name: string | null;
   sport: string | null;
+  notes: string | null;
   started_at: string;
   duration_s: number | null;
   moving_time_s: number | null;

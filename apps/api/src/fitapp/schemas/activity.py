@@ -7,6 +7,12 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class ActivityPatch(BaseModel):
+    name: str | None = None
+    sport: str | None = None
+    notes: str | None = None
+
+
 class ActivityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -14,6 +20,7 @@ class ActivityOut(BaseModel):
     file_name: str
     name: str | None
     sport: str | None
+    notes: str | None
     started_at: datetime
     duration_s: int | None
     moving_time_s: int | None

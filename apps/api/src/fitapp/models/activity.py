@@ -13,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     SmallInteger,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -34,6 +35,7 @@ class Activity(Base):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str | None] = mapped_column(String(255))
     sport: Mapped[str | None] = mapped_column(String(64))
+    notes: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(nullable=False)
 
     duration_s: Mapped[int | None] = mapped_column(Integer)

@@ -55,7 +55,7 @@ Ficheros fuente en `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`). **S
 
 ---
 
-## Estado actual (2026-05-06) — Fase 5 completa
+## Estado actual (2026-05-06) — Fase 6 completa
 
 ### Fase 1 — Completa ✅
 Auth completa (register + verify email + login/logout + `/users/me`). Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout.
@@ -90,6 +90,15 @@ Auth completa (register + verify email + login/logout + `/users/me`). Frontend: 
 - Nav en Layout con enlaces Actividades / Estadísticas.
 
 **Tests: 86 pasando.**
+
+### Fase 6 — Completa ✅
+- **Filtros en `GET /activities/`**: `q` (nombre), `sport`, `date_from`, `date_to`.
+- **`PATCH /activities/{id}`**: edición parcial de `name`, `sport`, `notes` (nueva columna Text, migración `472807ab1cee`).
+- **`GET /activities/export/csv`**: exporta lista filtrada como CSV.
+- **`GET /activities/{id}/export/gpx`**: genera GPX desde records almacenados (ETL con `xml.etree.ElementTree`).
+- Frontend: barra de filtros + botón "Exportar CSV" en ActivitiesPage; modal de edición + botón "Descargar GPX" en ActivityDetailPage.
+
+**Tests: 109 pasando.**
 
 ### Mejoras conocidas / bugs
 - Los nombres de actividad de las 114 actividades importadas en bulk son `NULL` (el geocoding en bulk_import tarda mucho por el rate-limit de Nominatim; considerar job asíncrono o comando separado de "enriquecer nombres").
