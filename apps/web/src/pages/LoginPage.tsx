@@ -9,7 +9,7 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { setAuth } = useAuthStore();
@@ -85,7 +85,7 @@ export default function LoginPage() {
               onChange={(e) => setRememberMe(e.target.checked)}
               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
             />
-            Recordarme (15 días)
+            Recordarme
           </label>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
