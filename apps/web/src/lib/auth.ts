@@ -63,3 +63,63 @@ export async function logoutApi(token: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+export async function sendOTPApi(email: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/auth/register/send-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(data.detail ?? 'Error al enviar el código', res.status);
+  }
+}
+
+export async function verifyOTPApi(email: string, code: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}/auth/register/verify-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(data.detail ?? 'Código incorrecto o expirado', res.status);
+  }
+  const data = await res.json();
+  return data.verified_token as string;
+}
+
+export async function completeRegistrationApi(payload: {
+  verified_token: string;
+  first_name: string;
+  last_name: string;
+  birth_date: string;
+  gender: string;
+  password: string;
+}): Promise<void> {
+  const res = await fetch(`${BASE_URL}/auth/register/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(data.detail ?? 'Error al crear la cuenta', res.status);
+  }
+}
+
+export async function completeGoogleRegistrationApi(
+  google_token: string,
+): Promise<{ access_token: string; token_type: string }> {
+  const res = await fetch(`${BASE_URL}/auth/register/complete-google`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ google_token }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(data.detail ?? 'Error al crear la cuenta con Google', res.status);
+  }
+  return res.json();
+}

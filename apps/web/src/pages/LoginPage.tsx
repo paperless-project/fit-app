@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { loginApi, getMeApi } from '@/lib/auth';
 import { useAuthStore } from '@/store/authStore';
 import { ApiError } from '@/lib/api';
@@ -7,10 +7,11 @@ import { ApiError } from '@/lib/api';
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 export default function LoginPage() {
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(searchParams.get('google_error') ?? '');
   const [loading, setLoading] = useState(false);
   const { setAuth } = useAuthStore();
   const navigate = useNavigate();
@@ -35,7 +36,7 @@ export default function LoginPage() {
 
   async function handleGoogleLogin() {
     try {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ flow: 'login' });
       ['openid', 'email', 'profile'].forEach((s) => params.append('scopes', s));
       const res = await fetch(`${BASE_URL}/auth/google/authorize?${params}`, {
         credentials: 'include',

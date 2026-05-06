@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fitapp import __version__
 from fitapp.auth.users import auth_backend, auth_backend_remember, fastapi_users, google_oauth_client
 from fitapp.config import settings
-from fitapp.routers import account, activities, google_callback, stats
+from fitapp.routers import account, activities, google_callback, register, stats
 from fitapp.schemas import UserCreate, UserRead, UserUpdate
 
 app = FastAPI(title="fit-app API", version=__version__)
@@ -25,6 +25,9 @@ app.add_middleware(
 async def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
 
+
+# Registro multi-paso (antes de fastapi-users para que /auth/register/* tenga prioridad)
+app.include_router(register.router)
 
 # Auth (fastapi-users)
 app.include_router(

@@ -36,6 +36,16 @@ class _GoogleOAuth2(GoogleOAuth2):
         data = response.json()
         return str(data["id"]), data.get("email")
 
+    async def get_profile(self, token: str) -> dict:
+        async with self.get_httpx_client() as client:
+            response = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if response.status_code >= 400:
+            return {}
+        return response.json()
+
 
 google_oauth_client = _GoogleOAuth2(
     settings.google_oauth_client_id,

@@ -67,7 +67,7 @@ docker compose exec api python enrich_names.py --all-users
 
 ```bash
 docker compose exec api pytest
-# → 147 tests pasando
+# → 171 tests pasando
 ```
 
 ## Desarrollo
@@ -97,12 +97,12 @@ fit-app/
 │   └── status.md                Estado de fases y trabajo pendiente
 ├── apps/api/                    Backend FastAPI
 │   ├── src/fitapp/
-│   │   ├── routers/             activities.py, stats.py, account.py, google_callback.py
-│   │   ├── services/            fit_parser.py, fit_repair.py, geocoding.py, activity_service.py
-│   │   ├── models/              activity.py, user.py (+ OAuthAccount)
-│   │   └── schemas/             activity.py, stats.py
-│   ├── alembic/versions/        4 migraciones Alembic
-│   ├── tests/                   Suite pytest (147 tests)
+│   │   ├── routers/             activities.py, stats.py, account.py, google_callback.py, register.py
+│   │   ├── services/            fit_parser.py, fit_repair.py, geocoding.py, activity_service.py, otp.py, email.py
+│   │   ├── models/              activity.py, user.py (+ OAuthAccount + Gender), email_otp.py
+│   │   └── schemas/             activity.py, stats.py, user.py, register.py
+│   ├── alembic/versions/        5 migraciones Alembic
+│   ├── tests/                   Suite pytest (171 tests, 20 ficheros)
 │   ├── bulk_import.py           CLI importación masiva de .fit
 │   └── enrich_names.py          CLI geocoding inverso de nombres
 └── apps/web/                    Frontend React + Vite
@@ -115,15 +115,17 @@ fit-app/
 
 ## Funcionalidades implementadas
 
-- **Auth**: registro, verificación email, login/logout JWT (8 h), perfil
+- **Registro multi-paso por email**: verificación OTP 6 dígitos → perfil (nombre, apellidos, fecha nacimiento, género) + contraseña; no envía email de verificación (OTP ya lo hace)
+- **Registro con Google**: botón "Registrarse con Google" → flujo OAuth2; nombre pre-rellenado desde Google; `birth_date`/`gender` opcionales más tarde
+- **Login**: email + contraseña, o Google OAuth2 — el botón "Acceder con Google" solo autentica usuarios existentes, no crea cuentas
 - **Recordarme**: checkbox en login → sesión de 15 días (endpoint `/auth/jwt-remember/login`)
-- **Login con Google**: OAuth2 via Google — solo para usuarios ya registrados con ese email; perfiles desconocidos redirigen a `/register` con mensaje explicativo
+- **Perfil incompleto**: campanilla en la barra de navegación cuando faltan `birth_date` o `gender`
 - **Upload**: drag-and-drop `.fit`, deduplicación por hash, reparación automática de ficheros corruptos
 - **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV completo
 - **Detalle**: mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
 - **Edición**: nombre, deporte y notas de cada actividad; borrado individual con confirmación
 - **Nombres automáticos**: geocoding inverso Nominatim asíncrono — genera nombres tipo "Castillo de Olite desde Tafalla"
 - **Estadísticas**: totales, calendario heatmap estilo GitHub, evolución mensual
-- **Gestión de cuenta** (`/account`): cambio de contraseña, borrado de cuenta con cascada de actividades
+- **Gestión de cuenta** (`/account`): cambio de contraseña, borrado de cuenta con cascada de actividades (funciona también para usuarios de Google)
 
 Contexto técnico completo en [`CLAUDE.md`](CLAUDE.md) y [`doc/PLAN.md`](doc/PLAN.md).

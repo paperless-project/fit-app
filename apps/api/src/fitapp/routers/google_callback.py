@@ -1,11 +1,13 @@
 """Callback OAuth2 de Google: intercambia el code por JWT y redirige al frontend."""
 from __future__ import annotations
 
+import secrets
 import urllib.parse
 
+import httpx
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi_users.exceptions import UserNotExists
 from fastapi_users.router.oauth import (
     CSRF_TOKEN_COOKIE_NAME,
@@ -26,6 +28,40 @@ _oauth2_callback = OAuth2AuthorizeCallback(
 )
 
 router = APIRouter()
+
+
+@router.get("/auth/google/authorize")
+async def google_authorize(
+    request: Request,
+    flow: str = "login",
+    scopes: list[str] = Query(default=["openid", "email", "profile"]),
+) -> JSONResponse:
+    """Genera la URL de autorización de Google.
+
+    flow='login'    → si el perfil no tiene cuenta en fit-app, redirige a /login con error.
+    flow='register' → si el perfil no tiene cuenta en fit-app, redirige a /register con token.
+    """
+    csrf_token = secrets.token_urlsafe(32)
+    state_data = {
+        CSRF_TOKEN_KEY: csrf_token,
+        "aud": STATE_TOKEN_AUDIENCE,
+        "flow": flow,
+    }
+    state = jwt.encode(state_data, settings.jwt_secret, algorithm="HS256")
+    authorization_url = await google_oauth_client.get_authorization_url(
+        BACKEND_CALLBACK_URL,
+        state=state,
+        scope=scopes,
+    )
+    response = JSONResponse({"authorization_url": authorization_url})
+    response.set_cookie(
+        CSRF_TOKEN_COOKIE_NAME,
+        csrf_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/auth/google/callback")
@@ -49,10 +85,16 @@ async def google_oauth_callback(
     if not csrf_token or csrf_token != cookie_csrf:
         raise HTTPException(status_code=400, detail="OAUTH_CSRF_ERROR")
 
+    flow = state_data.get("flow", "login")
+
     # Obtener datos de la cuenta Google
-    account_id, account_email = await google_oauth_client.get_id_email(
-        token["access_token"]
-    )
+    try:
+        account_id, account_email = await google_oauth_client.get_id_email(
+            token["access_token"]
+        )
+    except (httpx.ReadTimeout, httpx.ConnectError, httpx.HTTPError, Exception):
+        qs = urllib.parse.urlencode({"google_error": "Error al conectar con Google. Inténtalo de nuevo."})
+        return RedirectResponse(f"{settings.frontend_url}/login?{qs}", status_code=302)
 
     # Comprobar si ya existe una cuenta en fit-app para este perfil
     user_exists = False
@@ -70,11 +112,36 @@ async def google_oauth_callback(
             pass
 
     if not user_exists:
-        # No hay cuenta → redirigir al registro con mensaje explicativo
-        qs = urllib.parse.urlencode({
-            "google_error": "No existe una cuenta de fit-app para este perfil de Google.",
-        })
-        return RedirectResponse(f"{settings.frontend_url}/register?{qs}", status_code=302)
+        if flow == "register":
+            # Flujo registro: redirigir con token para completar perfil
+            from fitapp.services.otp import create_google_registration_token
+            try:
+                profile = await google_oauth_client.get_profile(token["access_token"])
+            except (httpx.ReadTimeout, httpx.ConnectError, httpx.HTTPError, Exception):
+                profile = {}
+            first_name = profile.get("given_name", "")
+            last_name = profile.get("family_name", "")
+            reg_token = create_google_registration_token(
+                email=account_email,
+                first_name=first_name,
+                last_name=last_name,
+                account_id=account_id,
+                google_access_token=token["access_token"],
+                expires_at=token.get("expires_at"),
+                refresh_token=token.get("refresh_token"),
+            )
+            qs = urllib.parse.urlencode({
+                "google_token": reg_token,
+                "first_name": first_name,
+                "last_name": last_name,
+            })
+            return RedirectResponse(f"{settings.frontend_url}/register?{qs}", status_code=302)
+        else:
+            # Flujo login: no crear cuenta, mostrar error
+            qs = urllib.parse.urlencode({
+                "google_error": "No tienes cuenta en fit-app con este perfil de Google. Regístrate primero.",
+            })
+            return RedirectResponse(f"{settings.frontend_url}/login?{qs}", status_code=302)
 
     # La cuenta existe → asociar OAuth si aún no estaba y hacer login
     try:

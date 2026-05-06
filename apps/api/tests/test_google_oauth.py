@@ -14,9 +14,11 @@ from fitapp.config import settings
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _get_state_and_csrf(client: AsyncClient) -> tuple[str, str]:
+async def _get_state_and_csrf(
+    client: AsyncClient, flow: str = "login"
+) -> tuple[str, str]:
     """Llama a /authorize y devuelve (state_jwt, csrf_cookie_value)."""
-    res = await client.get("/auth/google/authorize")
+    res = await client.get("/auth/google/authorize", params={"flow": flow})
     assert res.status_code == 200
     url = res.json()["authorization_url"]
     params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
@@ -73,6 +75,17 @@ async def test_google_authorize_sets_csrf_cookie(client: AsyncClient) -> None:
     assert any("fastapiusers" in k.lower() for k in res.cookies)
 
 
+async def test_google_authorize_state_contains_flow(client: AsyncClient) -> None:
+    """El state JWT generado por /authorize incluye el campo 'flow'."""
+    for flow in ("login", "register"):
+        res = await client.get("/auth/google/authorize", params={"flow": flow})
+        url = res.json()["authorization_url"]
+        encoded_state = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))["state"]
+        payload = jwt.decode(encoded_state, settings.jwt_secret, algorithms=["HS256"],
+                             audience="fastapi-users:oauth-state")
+        assert payload.get("flow") == flow, f"flow esperado={flow!r}, obtenido={payload.get('flow')!r}"
+
+
 # ── /auth/google/callback — casos de error ───────────────────────────────────
 
 async def test_google_callback_rejects_missing_state(client: AsyncClient) -> None:
@@ -106,7 +119,6 @@ async def test_google_callback_rejects_csrf_mismatch(client: AsyncClient) -> Non
                       new_callable=AsyncMock, return_value=mock_token):
         res = await client.get("/auth/google/callback",
                                params={"code": "fake", "state": state})
-        # Sin cookie → csrf_mismatch
     assert res.status_code == 400
     assert "CSRF" in res.json()["detail"]
 
@@ -140,11 +152,35 @@ async def test_google_uses_openid_userinfo_not_people_api(client: AsyncClient) -
 
 # ── Flujo completo con mocks ──────────────────────────────────────────────────
 
-async def test_google_callback_unknown_profile_redirects_to_register(client: AsyncClient) -> None:
-    """Si el perfil Google no tiene cuenta en fit-app → redirige a /register con mensaje."""
-    state, csrf = await _get_state_and_csrf(client)
+async def test_google_callback_network_error_redirects_to_login(client: AsyncClient) -> None:
+    """Timeout/error de red en get_id_email → redirige a /login con google_error (no 500)."""
+    import httpx as _httpx
+    state, csrf = await _get_state_and_csrf(client, flow="login")
 
-    p1, p2 = _mock_google(account_id="unknown_gid", email="unknown@example.com")
+    with patch.object(google_oauth_client, "get_access_token",
+                      new_callable=AsyncMock,
+                      return_value={"access_token": "tok", "token_type": "bearer"}):
+        with patch.object(google_oauth_client, "get_id_email",
+                          new_callable=AsyncMock,
+                          side_effect=_httpx.ReadTimeout("timeout")):
+            res = await client.get(
+                "/auth/google/callback",
+                params={"code": "code", "state": state},
+                cookies={"fastapiusersoauthcsrf": csrf},
+                follow_redirects=False,
+            )
+
+    assert res.status_code == 302, res.text
+    location = res.headers["location"]
+    assert "google_error" in location
+    assert "/login" in location
+
+
+async def test_google_callback_login_flow_unknown_profile_redirects_to_error(client: AsyncClient) -> None:
+    """flow=login + perfil sin cuenta → redirige a /login con google_error (NO crea usuario)."""
+    state, csrf = await _get_state_and_csrf(client, flow="login")
+
+    p1, p2 = _mock_google(account_id="unknown_login_gid", email="newuser_login@example.com")
     with p1, p2:
         res = await client.get(
             "/auth/google/callback",
@@ -155,9 +191,35 @@ async def test_google_callback_unknown_profile_redirects_to_register(client: Asy
 
     assert res.status_code == 302, res.text
     location = res.headers["location"]
-    assert "/register" in location
+    assert "/login" in location
     assert "google_error" in location
-    assert "fit-app" in urllib.parse.unquote(location)
+    # Verificar que NO redirige a registro (no crea usuario)
+    assert "/register" not in location
+
+
+async def test_google_callback_register_flow_unknown_profile_redirects_to_register(client: AsyncClient) -> None:
+    """flow=register + perfil sin cuenta → redirige a /register con google_token para crear cuenta."""
+    state, csrf = await _get_state_and_csrf(client, flow="register")
+
+    p1, p2 = _mock_google(account_id="unknown_reg_gid", email="newuser_reg@example.com")
+    with p1, p2:
+        with patch.object(
+            google_oauth_client, "get_profile",
+            new_callable=AsyncMock,
+            return_value={"given_name": "Test", "family_name": "User"},
+        ):
+            res = await client.get(
+                "/auth/google/callback",
+                params={"code": "code", "state": state},
+                cookies={"fastapiusersoauthcsrf": csrf},
+                follow_redirects=False,
+            )
+
+    assert res.status_code == 302, res.text
+    location = res.headers["location"]
+    assert "/register" in location
+    assert "google_token" in location
+    assert "/login" not in location
 
 
 async def test_google_callback_existing_user_gets_token(client: AsyncClient) -> None:
@@ -165,7 +227,7 @@ async def test_google_callback_existing_user_gets_token(client: AsyncClient) -> 
     from tests.conftest import register_user
     await register_user(client, "existing@example.com")
 
-    state, csrf = await _get_state_and_csrf(client)
+    state, csrf = await _get_state_and_csrf(client, flow="login")
     p1, p2 = _mock_google(account_id="gid_existing", email="existing@example.com")
     with p1, p2:
         res = await client.get(
@@ -187,7 +249,7 @@ async def test_google_callback_second_login_reuses_existing_user(client: AsyncCl
     await register_user(client, "linked@example.com")
 
     async def _login_with_google() -> str:
-        state, csrf = await _get_state_and_csrf(client)
+        state, csrf = await _get_state_and_csrf(client, flow="login")
         p1, p2 = _mock_google(account_id="same_gid", email="linked@example.com")
         with p1, p2:
             res = await client.get(

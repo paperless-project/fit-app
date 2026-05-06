@@ -56,10 +56,14 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 - **`get_access_token` hace HTTP real en tests** — parchear `google_oauth_client.get_access_token` con `AsyncMock` en todos los tests de callback, no solo en los del flujo completo
 - **CSRF cookie cross-origin**: el fetch a `/auth/google/authorize` debe llevar `credentials: 'include'` o el navegador descarta la `Set-Cookie` y el callback falla con `OAUTH_CSRF_ERROR`
 - **`csrf_token_cookie_secure=False`** en `get_oauth_router()` — obligatorio en HTTP dev; sin ello la cookie no se envía en la petición de callback
+- **`User.oauth_accounts` necesita `cascade="all, delete-orphan"`** — sin esto SQLAlchemy intenta `UPDATE oauth_account SET user_id=NULL` (NOT NULL) al borrar el usuario → `IntegrityError`; el `ON DELETE CASCADE` de BD solo funciona si el ORM no intenta NULL primero
+- **`/auth/google/authorize` sobreescrito en `google_callback.py`** — acepta `flow=login|register` y lo codifica en el state JWT; registrado ANTES del router fastapi-users para tomar precedencia
+- **`get_authorization_url` de httpx_oauth usa `scope=` no `scopes=`** — parámetro posicional distinto al nombre que usa fastapi-users internamente
+- **Registro multi-paso no usa `user_manager.create()`** — usa directamente `user_manager.user_db.create({...})` para evitar que `on_after_register` dispare el envío de email de verificación (el OTP ya verificó el email)
 
 ---
 
-## Estado actual (2026-05-06) — Mejoras login completas — 147 tests
+## Estado actual (2026-05-06) — Registro multi-paso + correcciones Google OAuth — 171 tests
 
 ### Fase 1 ✅ — Auth
 Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout, authStore (Zustand).
@@ -102,7 +106,7 @@ Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, Regis
 
 ### Fase 8 ✅ — Gestión de cuenta
 - `PATCH /users/me/password`: cambio de contraseña (valida actual, mín 8 chars nueva)
-- `DELETE /users/me`: borrado de cuenta con `{ confirm: true }` (cascade activities)
+- `DELETE /users/me`: borrado de cuenta con `{ confirm: true }` (cascade activities + oauth_accounts)
 - `DELETE /activities/{id}`: borrado de actividad (404 si no existe, 403 si no es propietario, 204 OK)
 - Frontend: `AccountPage` (`/account`) con formulario de cambio de contraseña + zona de peligro (modal con "BORRAR")
 - Frontend: botón "Borrar" en `ActivityDetailPage` con modal de confirmación
@@ -113,18 +117,40 @@ Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, Regis
 - **JWT_SECRET**: 256 bits (64 hex), generado con `openssl rand -hex 32`; lifetime 8 h (`JWT_LIFETIME_SECONDS=28800`)
 - **Paginación**: `GET /activities/` devuelve `{items, total, page, size, pages}`; `?page=1&size=20` (máx 100). `GET /activities/sports` para deportes distintos del usuario. Frontend: componente `Pagination` con prev/next y numeración.
 - **Recordarme (15 días)**: checkbox en LoginPage → llama a `/auth/jwt-remember/login`; segundo `AuthenticationBackend` (`jwt-remember`, 15 días)
-- **Login con Google OAuth2**: botón en LoginPage → fetch `/auth/google/authorize` (con `credentials: include`) → redirige al navegador a Google
-  - Callback personalizado `routers/google_callback.py`: valida CSRF, comprueba si el usuario ya existe (por OAuth account o email), si no existe → redirige a `/register?google_error=…`; si existe → genera JWT y redirige a `/auth/google/callback?access_token=…`
-  - `_GoogleOAuth2`: subclase que sobreescribe `get_id_email` para usar el endpoint OpenID estándar (`/oauth2/v2/userinfo`) en lugar de la People API (que requiere activación aparte en Google Console)
-  - Tabla `oauth_account` (migración `5a37abab0ca1`); FK apunta a `"users.id"` (no al default `"user.id"` de fastapi-users)
+- **Login con Google OAuth2** (`flow=login`): botón en LoginPage → fetch `/auth/google/authorize?flow=login` → redirige a Google
+  - Si el perfil Google **no tiene cuenta** → redirige a `/login?google_error=…` (NO crea usuario desde login)
+  - Si el perfil Google **tiene cuenta** → genera JWT y redirige a `/auth/google/callback?access_token=…`
+  - `_GoogleOAuth2`: sobreescribe `get_id_email` para usar `/oauth2/v2/userinfo` en lugar de People API
+  - Tabla `oauth_account` (migración `5a37abab0ca1`); FK apunta a `"users.id"`
   - `OAuthCallbackPage`: captura `?access_token=`, guarda en authStore, redirige a `/activities`
-  - `RegisterPage`: muestra banner ámbar con `?google_error=` si el perfil Google no tiene cuenta
+  - Errores de red (`httpx.ReadTimeout`) capturados → redirige con `google_error` en lugar de 500
+
+### Registro multi-paso con OTP y Google ✅
+- **Flujo email** (3 pasos):
+  1. `POST /auth/register/send-otp`: envía código OTP de 6 dígitos por email; invalida el anterior
+  2. `POST /auth/register/verify-otp`: verifica el código → devuelve `verified_token` (JWT 30 min)
+  3. `POST /auth/register/complete`: crea cuenta con Nombre, Apellidos, Fecha nacimiento, Género y contraseña; `is_verified=True` de entrada (el OTP ya verificó el email); envía email de bienvenida
+- **Flujo Google** (`flow=register`): botón en RegisterPage → fetch `/auth/google/authorize?flow=register`
+  - Si el perfil Google **no tiene cuenta** → redirige a `/register?google_token=…` para completar registro
+  - `POST /auth/register/complete-google`: crea cuenta vinculando OAuth; nombre tomado de Google; `birth_date`/`gender` quedan `null`
+  - El frontend auto-completa al montar con el `google_token`; envía email de bienvenida
+- **Campos de perfil** en `User`: `first_name`, `last_name`, `birth_date` (date), `gender` (enum)
+- **Campanilla "Faltan datos"** en navbar cuando `birth_date` o `gender` son `null` → enlaza a `/account`
+- **Migración**: `159b99c22872` — tabla `email_otp` + columnas de perfil en `users` + enum `gender_enum`
+- **Modelo `EmailOTP`**: `email`, `code`, `expires_at`, `used`
+- **Servicio `otp.py`**: `create_otp`, `verify_otp`, `create_verified_token`, `decode_verified_token`, `create_google_registration_token`, `decode_google_registration_token`
+
+### Correcciones Google OAuth ✅
+- **Borrado usuario Google**: `User.oauth_accounts` con `cascade="all, delete-orphan"` — sin este flag SQLAlchemy intentaba `SET user_id=NULL` (NOT NULL) → `IntegrityError`
+- **Separación login/registro**: `/auth/google/authorize?flow=login|register` codifica el flujo en el state JWT; el callback actúa en consecuencia
+- **500 en callback**: `httpx.ReadTimeout` en `get_id_email` ahora capturado → redirect gracioso a `/login?google_error=…`
 
 ---
 
 ## Bugs conocidos / trabajo pendiente
 - Las 114 actividades importadas en bulk tienen `name IS NULL` → ejecutar `docker compose exec api python enrich_names.py --all-users` (tarda ~15-20 min por rate-limit Nominatim)
 - `httpx-oauth` requiere instalación manual tras cada rebuild del contenedor API: `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"` (la capa de imagen no lo instala por caché de Docker; está en `pyproject.toml` pero el build no lo detecta como cambio)
+- El borrado de cuenta desde `/account` no borra los `oauth_accounts` visibles en Adminer (se eliminan por cascade de BD, pero conviene verificar en producción)
 
 ---
 

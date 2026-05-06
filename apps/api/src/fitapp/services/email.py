@@ -35,3 +35,27 @@ async def send_verification_email(email: str, token: str) -> None:
     <p>Este enlace caduca en 1 hora.</p>
     """
     await asyncio.to_thread(_send_sync, email, "Confirma tu correo — fit-app", body)
+
+
+async def send_welcome_email(email: str, first_name: str) -> None:
+    if not settings.smtp_host:
+        return
+    body = f"""
+    <p>Hola <strong>{first_name}</strong>,</p>
+    <p>Te damos la bienvenida a <strong>fit-app</strong>. 🎉</p>
+    <p>Ya puedes acceder a tu cuenta y empezar a explorar tus actividades.</p>
+    <p><a href="{settings.frontend_url}/login">Entrar a fit-app</a></p>
+    """
+    await asyncio.to_thread(_send_sync, email, "Te damos la bienvenida a fit-app", body)
+
+
+async def send_otp_email(email: str, code: str) -> None:
+    if not settings.smtp_host:
+        return
+    body = f"""
+    <p>Tu código de verificación para <strong>fit-app</strong> es:</p>
+    <h2 style="letter-spacing: 8px; font-size: 36px; font-family: monospace;">{code}</h2>
+    <p>Este código caduca en <strong>10 minutos</strong>.</p>
+    <p>Si no has solicitado este código, ignora este mensaje.</p>
+    """
+    await asyncio.to_thread(_send_sync, email, "Código de verificación — fit-app", body)

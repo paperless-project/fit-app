@@ -94,11 +94,32 @@ CREATE TABLE laps (
 );
 ```
 
+**Campos de perfil en `users`** (migración `159b99c22872`):
+```sql
+ALTER TABLE users ADD COLUMN first_name  varchar(100);
+ALTER TABLE users ADD COLUMN last_name   varchar(100);
+ALTER TABLE users ADD COLUMN birth_date  date;
+ALTER TABLE users ADD COLUMN gender      gender_enum;  -- enum: hombre/mujer/no_binario/prefiero_no_decirlo/otro
+```
+
+**Tabla `email_otp`** (migración `159b99c22872`):
+```sql
+CREATE TABLE email_otp (
+  id         uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email      varchar(320) NOT NULL,
+  code       varchar(6)   NOT NULL,
+  expires_at timestamptz  NOT NULL,
+  used       boolean      NOT NULL DEFAULT false
+);
+CREATE INDEX ix_email_otp_email ON email_otp (email);
+```
+
 **Migraciones aplicadas:**
 - `379c3241c147` — initial_schema (tablas + extensiones + índices GiST)
 - `6bf7f63a1065` — add_activity_name
 - `472807ab1cee` — add_notes_to_activities
 - `5a37abab0ca1` — add_oauth_account_table (tabla OAuth para login con Google)
+- `159b99c22872` — add_email_otp_table_and_user_profile_fields (OTP + first_name/last_name/birth_date/gender)
 
 ## 3. API REST implementada
 
@@ -111,15 +132,21 @@ POST /auth/jwt/logout
 POST /auth/verify
 
 # Auth — Google OAuth2
-GET  /auth/google/authorize       devuelve JSON {authorization_url}; requiere credentials:include para CSRF cookie
-GET  /auth/google/callback        callback del servidor: valida CSRF, comprueba usuario, emite JWT o redirige a /register
+GET  /auth/google/authorize       ?flow=login|register  →  JSON {authorization_url}; credentials:include para CSRF
+GET  /auth/google/callback        valida CSRF + flow; login si existe, crea token reg. si flow=register, error si flow=login
+
+# Registro multi-paso (OTP + perfil)
+POST /auth/register/send-otp      {email} → envía código 6 dígitos; invalida el anterior
+POST /auth/register/verify-otp   {email, code} → {verified_token} (JWT 30 min)
+POST /auth/register/complete     {verified_token, first_name, last_name, birth_date, gender, password} → 201 usuario
+POST /auth/register/complete-google  {google_token} → 201 {access_token}; vincula OAuth, nombre de Google
 
 # Perfil de usuario
 GET|PATCH /users/me
 
 # Cuenta de usuario
 PATCH  /users/me/password         cambio de contraseña; 400 si actual errónea; 422 si nueva < 8 chars
-DELETE /users/me                  borrado de cuenta con {confirm:true}; cascade activities
+DELETE /users/me                  borrado de cuenta con {confirm:true}; cascade activities + oauth_accounts
 
 # Actividades
 GET    /activities/               paginado {items,total,page,size,pages}; filtros: q,sport,date_from,date_to,page,size
@@ -151,9 +178,11 @@ GET /stats/timeline?bucket=month|year
 | **7. Enriquecimiento asíncrono** | BackgroundTasks geocoding, CLI enrich_names.py | ✅ Completa |
 | **Mejoras** | JWT 256 bits / 8 h, paginación GET /activities/, GET /activities/sports | ✅ Completa |
 | **8. Gestión de cuenta** | PATCH /users/me/password, DELETE /users/me, DELETE /activities/{id}, AccountPage | ✅ Completa |
-| **Mejoras login** | Checkbox "Recordarme" (15 días), login con Google OAuth2 (no auto-registro), OAuthCallbackPage | ✅ Completa |
+| **Mejoras login** | Recordarme (15 días), Google OAuth2 login con flow=login/register, OAuthCallbackPage | ✅ Completa |
+| **Registro multi-paso** | OTP email 3 pasos + Google auto-registro, campos perfil, campanilla "Faltan datos" | ✅ Completa |
+| **Correcciones OAuth** | Borrado usuario Google, separación login/registro, manejo ReadTimeout | ✅ Completa |
 
-**147 tests pasando.** Ver estado detallado en [`.agent/context/status.md`](../.agent/context/status.md).
+**171 tests pasando.**
 
 ## 5. Flujo de datos principal
 
