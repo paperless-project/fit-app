@@ -4,9 +4,10 @@ from __future__ import annotations
 import datetime
 import enum
 import uuid
+from decimal import Decimal
 
 from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID, SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Date, Enum as SAEnum, ForeignKey, String
+from sqlalchemy import BigInteger, Date, Enum as SAEnum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
@@ -45,3 +46,18 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     gender: Mapped[Gender | None] = mapped_column(
         SAEnum(Gender, name="gender_enum"), nullable=True
     )
+    ftp: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
+
+class StravaToken(Base):
+    __tablename__ = "strava_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    access_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    refresh_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    expires_at: Mapped[int] = mapped_column(BigInteger, nullable=False)  # epoch Unix
+    athlete_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_import_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)

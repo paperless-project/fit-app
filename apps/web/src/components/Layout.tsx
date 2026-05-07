@@ -26,6 +26,9 @@ export default function Layout() {
             <Link to="/stats" className="text-sm text-slate-600 hover:text-slate-900">
               Estadísticas
             </Link>
+            <Link to="/calendar" className="text-sm text-slate-600 hover:text-slate-900">
+              Calendario
+            </Link>
           </nav>
           <div className="flex items-center gap-4">
             {user && (!user.birth_date || !user.gender) && (

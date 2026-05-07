@@ -10,6 +10,7 @@ import VerifyPage from '@/pages/VerifyPage';
 import ActivitiesPage from '@/pages/ActivitiesPage'
 import ActivityDetailPage from '@/pages/ActivityDetailPage';
 import StatsPage from '@/pages/StatsPage';
+import CalendarPage from '@/pages/CalendarPage';
 import AccountPage from '@/pages/AccountPage';
 import OAuthCallbackPage from '@/pages/OAuthCallbackPage';
 
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/activities" element={<ActivitiesPage />} />
           <Route path="/activities/:id" element={<ActivityDetailPage />} />
           <Route path="/stats" element={<StatsPage />} />
+          <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/" element={<Navigate to="/activities" replace />} />
         </Route>

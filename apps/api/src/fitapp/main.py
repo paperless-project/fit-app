@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fitapp import __version__
 from fitapp.auth.users import auth_backend, auth_backend_remember, fastapi_users, google_oauth_client
 from fitapp.config import settings
-from fitapp.routers import account, activities, google_callback, register, stats
+from fitapp.routers import account, activities, google_callback, register, stats, strava
 from fitapp.schemas import UserCreate, UserRead, UserUpdate
 
 app = FastAPI(title="fit-app API", version=__version__)
@@ -65,5 +65,6 @@ app.include_router(
 )
 
 # Recursos de la app
+app.include_router(strava.router)
 app.include_router(activities.router)
 app.include_router(stats.router)

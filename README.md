@@ -1,15 +1,17 @@
 # fit-app
 
-Aplicación web para importar ficheros FIT (actividades ciclistas), almacenarlos en PostgreSQL+PostGIS y generar visualizaciones: mapa GPS, gráficas de altitud/velocidad/FC/cadencia/potencia, estadísticas agregadas y calendario de actividad. Multi-usuario con autenticación JWT.
+Aplicación web para importar actividades ciclistas (ficheros FIT o desde Strava), almacenarlas en PostgreSQL+PostGIS y generar visualizaciones: mapa GPS, gráficas de altitud/velocidad/FC/cadencia/potencia, estadísticas agregadas, calendario TSS/IF y potencia normalizada. Multi-usuario con autenticación JWT.
 
 ## Stack
 
 | Capa | Tecnología |
 |---|---|
 | Backend | Python 3.12 + FastAPI + SQLAlchemy 2.0 + Alembic + GeoAlchemy2 |
-| Auth | `fastapi-users` (JWT + verificación email) |
+| Auth | `fastapi-users` (JWT + Google OAuth2 + verificación email) |
 | Parsing FIT | `fitparse` + reparación CRC-16 propia |
 | Geocoding | Nominatim OSM (sin API key) |
+| Potencia | Estimación física (gravedad + aerodinámica + rodadura) |
+| Strava | OAuth2 + import actividades via API (streams GPS/HR/potencia) |
 | BD | PostgreSQL 16 + PostGIS |
 | Frontend | React 18 + Vite + TypeScript + Tailwind + Chart.js + Leaflet |
 | Infra dev | Docker Compose |
@@ -25,8 +27,9 @@ No es necesario tener Python ni Node instalados localmente.
 ```bash
 # 1. Variables de entorno
 cp .env.example .env
-# Editar .env: añadir GOOGLE_OAUTH_CLIENT_ID y GOOGLE_OAUTH_CLIENT_SECRET
-# (obtener en console.cloud.google.com → APIs & Services → Credentials)
+# Editar .env con tus credenciales:
+#   GOOGLE_OAUTH_CLIENT_ID/SECRET  (console.cloud.google.com → APIs & Services → Credentials)
+#   STRAVA_CLIENT_ID/SECRET        (strava.com/settings/api — Authorization Callback Domain: localhost)
 
 # 2. Levantar el stack completo
 docker compose up --build -d
@@ -50,24 +53,26 @@ docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"
 
 ## Importar actividades
 
+### Desde ficheros FIT (bulk)
 ```bash
-# 1. Registrar un usuario (desde la UI o la consola)
+# 1. Registrar un usuario desde la UI
 # 2. Importar los ficheros .fit en bulk
 docker compose exec api python bulk_import.py --user-email tu@email.com --path /activities
 
 # 3. Enriquecer los nombres via geocoding inverso (Nominatim, ~1 min por actividad)
 docker compose exec api python enrich_names.py --user-email tu@email.com
-# O para todos los usuarios:
-docker compose exec api python enrich_names.py --all-users
 ```
 
-`/activities` está montado en el contenedor desde `/workspace/xabi/Activities` en modo solo-lectura.
+### Desde Strava
+1. Configura `STRAVA_CLIENT_ID` y `STRAVA_CLIENT_SECRET` en `.env` y reinicia: `docker compose up -d api`
+2. En la UI: **Mi cuenta → Strava → Conectar con Strava**
+3. Pulsa **Importar actividades** (opcionalmente filtra por rango de fechas)
 
 ## Tests
 
 ```bash
 docker compose exec api pytest
-# → 171 tests pasando
+# → 214 tests pasando (22 ficheros)
 ```
 
 ## Desarrollo
@@ -75,11 +80,14 @@ docker compose exec api pytest
 ```bash
 # Nueva migración tras modificar models/
 docker compose exec api alembic revision --autogenerate -m "descripcion"
-# ⚠️ Revisar el fichero antes de aplicar: autogenerate detecta falsos positivos con índices GiST
+# ⚠️ Revisar el fichero antes de aplicar: eliminar falsos positivos de índices GiST
 docker compose exec api alembic upgrade head
 
 # Rebuild completo (si cambia pyproject.toml)
 docker compose down && docker volume rm fit-app_api_venv && docker compose up --build -d
+
+# Reiniciar API (nueva variable de entorno en .env)
+docker compose up -d api
 ```
 
 ## Estructura del repositorio
@@ -89,43 +97,51 @@ fit-app/
 ├── CLAUDE.md                    Contexto técnico y convenciones para sesiones de IA
 ├── doc/PLAN.md                  Plan de desarrollo y decisiones de arquitectura
 ├── .agent/context/              Documentación técnica detallada por área
-│   ├── api.md                   Endpoints, schemas, servicios, tests
-│   ├── architecture.md          Flujos de datos, decisiones irreversibles
+│   ├── api.md                   Endpoints, schemas, servicios, mocks de tests
+│   ├── architecture.md          Flujos de datos, orden de routers, decisiones irreversibles
 │   ├── database.md              Esquema BD, migraciones, gotchas
 │   ├── devops.md                Docker, comandos, variables de entorno
 │   ├── frontend.md              Estructura React, componentes, convenciones
 │   └── status.md                Estado de fases y trabajo pendiente
 ├── apps/api/                    Backend FastAPI
 │   ├── src/fitapp/
-│   │   ├── routers/             activities.py, stats.py, account.py, google_callback.py, register.py
-│   │   ├── services/            fit_parser.py, fit_repair.py, geocoding.py, activity_service.py, otp.py, email.py
-│   │   ├── models/              activity.py, user.py (+ OAuthAccount + Gender), email_otp.py
-│   │   └── schemas/             activity.py, stats.py, user.py, register.py
-│   ├── alembic/versions/        5 migraciones Alembic
-│   ├── tests/                   Suite pytest (171 tests, 20 ficheros)
+│   │   ├── routers/             activities, stats, account, strava, google_callback, register
+│   │   ├── services/            fit_parser, fit_repair, geocoding, activity_service,
+│   │   │                        power_estimation, strava_service, otp, email
+│   │   ├── models/              activity.py (Activity, Record, Lap)
+│   │   │                        user.py (User, OAuthAccount, StravaToken)
+│   │   └── schemas/             activity, stats, user, register
+│   ├── alembic/versions/        7 migraciones Alembic
+│   ├── tests/                   214 tests (22 ficheros)
 │   ├── bulk_import.py           CLI importación masiva de .fit
 │   └── enrich_names.py          CLI geocoding inverso de nombres
 └── apps/web/                    Frontend React + Vite
     └── src/
-        ├── pages/               ActivitiesPage, ActivityDetailPage, StatsPage, AccountPage,
-        │                        LoginPage, RegisterPage, VerifyPage, OAuthCallbackPage
-        ├── components/          ActivityMap, ActivityCharts, Layout
-        └── lib/                 activities.ts, stats.ts, account.ts, auth.ts, api.ts
+        ├── pages/               Activities, ActivityDetail, Stats, Calendar, Account,
+        │                        Login, Register, Verify, OAuthCallback
+        ├── components/          ActivityMap, ActivityCharts, Layout, Pagination
+        └── lib/                 activities, stats, account, strava, auth, api
 ```
 
 ## Funcionalidades implementadas
 
-- **Registro multi-paso por email**: verificación OTP 6 dígitos → perfil (nombre, apellidos, fecha nacimiento, género) + contraseña; no envía email de verificación (OTP ya lo hace)
-- **Registro con Google**: botón "Registrarse con Google" → flujo OAuth2; nombre pre-rellenado desde Google; `birth_date`/`gender` opcionales más tarde
-- **Login**: email + contraseña, o Google OAuth2 — el botón "Acceder con Google" solo autentica usuarios existentes, no crea cuentas
-- **Recordarme**: checkbox en login → sesión de 15 días (endpoint `/auth/jwt-remember/login`)
-- **Perfil incompleto**: campanilla en la barra de navegación cuando faltan `birth_date` o `gender`
-- **Upload**: drag-and-drop `.fit`, deduplicación por hash, reparación automática de ficheros corruptos
-- **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV completo
-- **Detalle**: mapa Leaflet con traza GPS, gráficas Chart.js sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
-- **Edición**: nombre, deporte y notas de cada actividad; borrado individual con confirmación
-- **Nombres automáticos**: geocoding inverso Nominatim asíncrono — genera nombres tipo "Castillo de Olite desde Tafalla"
-- **Estadísticas**: totales, calendario heatmap estilo GitHub, evolución mensual
-- **Gestión de cuenta** (`/account`): cambio de contraseña, borrado de cuenta con cascada de actividades (funciona también para usuarios de Google)
+- **Registro multi-paso por email**: OTP 6 dígitos → perfil (nombre, apellidos, fecha nacimiento, género) + contraseña
+- **Registro con Google**: OAuth2; nombre pre-rellenado desde Google; perfil completable después
+- **Login**: email + contraseña, o Google OAuth2 (solo autentica cuentas existentes)
+- **Recordarme**: sesión de 15 días
+- **Perfil incompleto**: campanilla en navbar cuando faltan `birth_date` o `gender`
+- **Upload FIT**: drag-and-drop, deduplicación por hash, reparación automática de CRC
+- **Importación Strava**: OAuth2, import paginado de actividades con streams GPS/HR/cadencia/potencia, deduplicación por ID Strava
+- **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV
+- **Detalle**: mapa Leaflet + gráficas sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
+- **Edición**: nombre, deporte, notas; borrado individual con confirmación
+- **Nombres automáticos**: geocoding inverso Nominatim asíncrono — "Castillo de Olite desde Tafalla"
+- **Potencia estimada**: física (gravedad + aerodinámica + rodadura) para actividades sin medidor
+- **Potencia Normalizada (NP)**: calculada en tiempo de importación (Allen & Coggan, media móvil 30 s)
+- **TSS e IF**: calculados en tiempo de consulta a partir de NP + FTP del usuario
+- **Estadísticas**: totales (km/h/actividades/desnivel), heatmap GitHub-style, evolución mensual/anual
+- **Calendario** (`/calendar`): cuadrícula de semanas con TSS/IF/distancia/tiempo/calorías por semana
+- **Perfil de entrenamiento**: FTP y peso corporal; botón "Recalcular NP" para actividades históricas
+- **Gestión de cuenta**: cambio de contraseña, desconectar Strava, borrado de cuenta con cascada
 
 Contexto técnico completo en [`CLAUDE.md`](CLAUDE.md) y [`doc/PLAN.md`](doc/PLAN.md).

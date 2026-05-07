@@ -1,0 +1,242 @@
+"""Cliente Strava API + conversión de actividades a ParsedFit."""
+from __future__ import annotations
+
+import hashlib
+import time
+from datetime import datetime, timedelta
+from typing import Any
+
+import httpx
+
+from fitapp.config import settings
+from fitapp.services.fit_parser import ParsedFit
+
+STRAVA_AUTH_URL = "https://www.strava.com/oauth/authorize"
+STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
+STRAVA_API_BASE = "https://www.strava.com/api/v3"
+SCOPE = "activity:read_all"
+
+STREAM_KEYS = "time,latlng,altitude,heartrate,cadence,watts,temp,distance,velocity_smooth"
+
+
+def get_authorization_url(state: str) -> str:
+    redirect_uri = f"{settings.api_url}/strava/callback"
+    return (
+        f"{STRAVA_AUTH_URL}"
+        f"?client_id={settings.strava_client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&approval_prompt=auto"
+        f"&scope={SCOPE}"
+        f"&state={state}"
+    )
+
+
+async def exchange_code(code: str) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(STRAVA_TOKEN_URL, data={
+            "client_id": settings.strava_client_id,
+            "client_secret": settings.strava_client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+        })
+        r.raise_for_status()
+        return r.json()
+
+
+async def refresh_access_token(refresh_token: str) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(STRAVA_TOKEN_URL, data={
+            "client_id": settings.strava_client_id,
+            "client_secret": settings.strava_client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        })
+        r.raise_for_status()
+        return r.json()
+
+
+def is_token_expired(expires_at: int) -> bool:
+    return time.time() >= expires_at - 60
+
+
+async def get_valid_access_token(db: Any, user_id: Any) -> str:
+    from fastapi import HTTPException
+    from sqlalchemy import select
+    from fitapp.models.user import StravaToken
+
+    result = await db.execute(select(StravaToken).where(StravaToken.user_id == user_id))
+    token_row = result.scalar_one_or_none()
+    if token_row is None:
+        raise HTTPException(status_code=401, detail="Strava no conectado")
+
+    if is_token_expired(token_row.expires_at):
+        data = await refresh_access_token(token_row.refresh_token)
+        token_row.access_token = data["access_token"]
+        token_row.refresh_token = data["refresh_token"]
+        token_row.expires_at = data["expires_at"]
+        await db.commit()
+
+    return token_row.access_token
+
+
+async def _get(access_token: str, url: str, params: dict | None = None) -> httpx.Response:
+    """GET autenticado con un único reintento ante 429 (máx 15 s de espera)."""
+    import asyncio as _asyncio
+    import logging as _log
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    for attempt in range(2):
+        async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+            r = await client.get(url, params=params)
+        if r.status_code == 429:
+            # Limitar la espera a 15 s para no bloquear el servidor indefinidamente
+            wait = min(int(r.headers.get("Retry-After", 15)), 15)
+            _log.getLogger(__name__).warning("Strava 429 — esperando %ds (intento %d)", wait, attempt + 1)
+            await _asyncio.sleep(wait)
+            continue
+        return r
+    r.raise_for_status()
+    return r
+
+
+async def list_activities(
+    access_token: str,
+    after: int | None = None,
+    before: int | None = None,
+    page: int = 1,
+    per_page: int = 100,
+) -> list[dict]:
+    params: dict[str, Any] = {"page": page, "per_page": per_page}
+    if after:
+        params["after"] = after
+    if before:
+        params["before"] = before
+
+    r = await _get(access_token, f"{STRAVA_API_BASE}/athlete/activities", params)
+    r.raise_for_status()
+    return r.json()
+
+
+async def get_activity_streams(access_token: str, activity_id: int) -> dict[str, list]:
+    r = await _get(
+        access_token,
+        f"{STRAVA_API_BASE}/activities/{activity_id}/streams",
+        {"keys": STREAM_KEYS, "key_by_type": "true"},
+    )
+    if r.status_code == 404:
+        return {}
+    r.raise_for_status()
+    return {k: v["data"] for k, v in r.json().items()}
+
+
+async def get_activity_laps(access_token: str, activity_id: int) -> list[dict]:
+    r = await _get(access_token, f"{STRAVA_API_BASE}/activities/{activity_id}/laps")
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    return r.json()
+
+
+def strava_hash(strava_id: int) -> str:
+    return hashlib.sha256(f"strava-{strava_id}".encode()).hexdigest()
+
+
+def _naive_utc(dt_str: str | None) -> datetime | None:
+    """Parsea ISO 8601 UTC y devuelve datetime naive (sin tzinfo) para compatibilidad con TIMESTAMP WITHOUT TIME ZONE."""
+    if not dt_str:
+        return None
+    return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).replace(tzinfo=None)
+
+
+def strava_to_parsed(activity: dict, streams: dict, laps_data: list[dict]) -> ParsedFit:
+    strava_id = activity["id"]
+    started_at = _naive_utc(activity.get("start_date"))
+
+    # ── punto de inicio ──────────────────────────────────────────────────────
+    start_latlng = activity.get("start_latlng") or []
+    start_point_wkt = None
+    if len(start_latlng) == 2:
+        lat, lon = start_latlng
+        start_point_wkt = f"POINT({lon} {lat})"
+
+    # ── bounding box ─────────────────────────────────────────────────────────
+    bbox_wkt = None
+    latlng_stream: list = streams.get("latlng", [])
+    if latlng_stream:
+        lats = [p[0] for p in latlng_stream]
+        lons = [p[1] for p in latlng_stream]
+        min_lat, max_lat = min(lats), max(lats)
+        min_lon, max_lon = min(lons), max(lons)
+        bbox_wkt = (
+            f"POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},"
+            f"{max_lon} {max_lat},{min_lon} {max_lat},{min_lon} {min_lat}))"
+        )
+
+    # ── records (serie temporal) ─────────────────────────────────────────────
+    records: list[dict] = []
+    time_stream: list = streams.get("time", [])
+    dist_stream: list = streams.get("distance", [])
+    spd_stream: list = streams.get("velocity_smooth", [])
+    alt_stream: list = streams.get("altitude", [])
+    hr_stream: list = streams.get("heartrate", [])
+    cad_stream: list = streams.get("cadence", [])
+    pwr_stream: list = streams.get("watts", [])
+    temp_stream: list = streams.get("temp", [])
+
+    for i, t in enumerate(time_stream):
+        point = latlng_stream[i] if i < len(latlng_stream) else None
+        lat = point[0] if point is not None else None
+        lon = point[1] if point is not None else None
+
+        ts = started_at + timedelta(seconds=t) if started_at is not None else None
+
+        records.append({
+            "ts": ts,
+            "lat": lat,
+            "lon": lon,
+            "altitude_m": alt_stream[i] if i < len(alt_stream) else None,
+            "distance_m": dist_stream[i] if i < len(dist_stream) else None,
+            "speed_mps": spd_stream[i] if i < len(spd_stream) else None,
+            "heart_rate": int(hr_stream[i]) if i < len(hr_stream) else None,
+            "cadence": int(cad_stream[i]) if i < len(cad_stream) else None,
+            "power": int(pwr_stream[i]) if i < len(pwr_stream) else None,
+            "temperature": int(temp_stream[i]) if i < len(temp_stream) else None,
+        })
+
+    # ── laps ─────────────────────────────────────────────────────────────────
+    laps: list[dict] = []
+    for i, lap in enumerate(laps_data):
+        st = _naive_utc(lap.get("start_date"))
+        laps.append({
+            "lap_index": i,
+            "start_time": st,
+            "duration_s": lap.get("elapsed_time"),
+            "distance_m": lap.get("distance"),
+            "avg_speed_mps": lap.get("average_speed"),
+            "avg_hr": lap.get("average_heartrate"),
+            "ascent_m": lap.get("total_elevation_gain"),
+        })
+
+    return ParsedFit(
+        file_hash=strava_hash(strava_id),
+        file_name=f"strava_{strava_id}.json",
+        started_at=started_at,
+        sport=activity.get("sport_type") or activity.get("type"),
+        duration_s=activity.get("elapsed_time"),
+        moving_time_s=activity.get("moving_time"),
+        distance_m=activity.get("distance"),
+        ascent_m=activity.get("total_elevation_gain"),
+        descent_m=None,
+        avg_speed_mps=activity.get("average_speed"),
+        max_speed_mps=activity.get("max_speed"),
+        avg_hr=int(activity["average_heartrate"]) if activity.get("average_heartrate") else None,
+        max_hr=int(activity["max_heartrate"]) if activity.get("max_heartrate") else None,
+        avg_cadence=int(activity["average_cadence"]) if activity.get("average_cadence") else None,
+        avg_power=int(activity["average_watts"]) if activity.get("average_watts") else None,
+        calories=activity.get("calories"),
+        start_point_wkt=start_point_wkt,
+        bbox_wkt=bbox_wkt,
+        records=records,
+        laps=laps,
+    )

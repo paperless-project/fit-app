@@ -33,6 +33,7 @@ class ActivityOut(BaseModel):
     max_hr: int | None
     avg_cadence: int | None
     avg_power: int | None
+    normalized_power: int | None
     calories: int | None
     created_at: datetime
 

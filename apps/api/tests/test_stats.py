@@ -159,3 +159,89 @@ async def test_stats_timeline_year_bucket(client: AsyncClient) -> None:
 async def test_stats_timeline_requires_auth(client: AsyncClient) -> None:
     res = await client.get("/stats/timeline")
     assert res.status_code == 401
+
+
+# ── /stats/calendar-detail ────────────────────────────────────────────────────
+
+async def test_calendar_detail_empty(client: AsyncClient) -> None:
+    await register_user(client)
+    token = await login_user(client)
+
+    res = await client.get(
+        "/stats/calendar-detail?year=2024",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["year"] == 2024
+    assert body["ftp"] == 200  # default
+    assert body["summary"]["total_activities"] == 0
+    assert body["summary"]["total_km"] == 0.0
+    assert body["weeks"] == []
+    assert body["days"] == {}
+
+
+async def test_calendar_detail_with_data(client: AsyncClient) -> None:
+    await register_user(client)
+    token = await login_user(client)
+    activity = await _upload(client, token)
+
+    started_at = activity["started_at"]
+    year = int(started_at[:4])
+    date_key = started_at[:10]
+
+    res = await client.get(
+        f"/stats/calendar-detail?year={year}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["summary"]["total_activities"] == 1
+    assert body["summary"]["total_km"] > 0
+    assert date_key in body["days"]
+    day_acts = body["days"][date_key]
+    assert len(day_acts) == 1
+    act = day_acts[0]
+    assert act["id"] == activity["id"]
+    assert act["distance_m"] is not None
+    assert len(body["weeks"]) == 1
+
+
+async def test_calendar_detail_week_has_distance(client: AsyncClient) -> None:
+    await register_user(client)
+    token = await login_user(client)
+    activity = await _upload(client, token)
+
+    year = int(activity["started_at"][:4])
+    res = await client.get(
+        f"/stats/calendar-detail?year={year}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    body = res.json()
+    week = body["weeks"][0]
+    assert week["distance_m"] > 0
+    assert week["duration_s"] > 0
+
+
+async def test_calendar_detail_requires_auth(client: AsyncClient) -> None:
+    res = await client.get("/stats/calendar-detail?year=2024")
+    assert res.status_code == 401
+
+
+# ── /stats/recalculate-np ─────────────────────────────────────────────────────
+
+async def test_recalculate_np(client: AsyncClient) -> None:
+    await register_user(client)
+    token = await login_user(client)
+
+    res = await client.post(
+        "/stats/recalculate-np",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 202
+    assert "message" in res.json()
+
+
+async def test_recalculate_np_requires_auth(client: AsyncClient) -> None:
+    res = await client.post("/stats/recalculate-np")
+    assert res.status_code == 401

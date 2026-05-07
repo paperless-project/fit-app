@@ -14,6 +14,8 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     last_name: str | None = None
     birth_date: datetime.date | None = None
     gender: Gender | None = None
+    ftp: int | None = None
+    weight_kg: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -27,3 +29,5 @@ class UserUpdate(schemas.BaseUserUpdate):
     last_name: str | None = None
     birth_date: datetime.date | None = None
     gender: Gender | None = None
+    ftp: int | None = None
+    weight_kg: float | None = None

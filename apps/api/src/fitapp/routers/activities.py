@@ -82,7 +82,9 @@ async def upload_activity(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    activity, is_duplicate = await persist_activity(db, user.id, parsed)
+    weight_kg = float(user.weight_kg) if user.weight_kg is not None else 75.0
+    total_mass_kg = weight_kg + 10.0
+    activity, is_duplicate = await persist_activity(db, user.id, parsed, total_mass_kg)
     if is_duplicate:
         raise HTTPException(status_code=409, detail="ACTIVITY_ALREADY_EXISTS")
 

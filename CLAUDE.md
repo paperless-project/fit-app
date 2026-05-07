@@ -1,9 +1,9 @@
 # fit-app — Memoria del proyecto
 
 ## Objetivo
-App web para importar ficheros FIT (actividades ciclistas), almacenarlos en PostgreSQL+PostGIS y generar visualizaciones: mapa GPS, gráficas, estadísticas. Multi-usuario con auth JWT.
+App web para importar actividades ciclistas (ficheros FIT o desde Strava), almacenarlas en PostgreSQL+PostGIS y generar visualizaciones: mapa GPS, gráficas, estadísticas. Multi-usuario con auth JWT.
 
-Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → montados en `/activities:ro`. **No modificar.**
+Ficheros FIT locales: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → montados en `/activities:ro`. **No modificar.**
 
 ---
 
@@ -12,10 +12,11 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 | Capa | Tecnología |
 |---|---|
 | Backend | Python 3.12 + FastAPI + SQLAlchemy 2.0 + Alembic + GeoAlchemy2 |
-| Auth | `fastapi-users` (JWT + verificación email) |
+| Auth | `fastapi-users` (JWT + Google OAuth2 + verificación email) |
 | Email dev | Mailpit (SMTP local, puerto 1026:1025) |
 | Parsing FIT | `fitparse` + `services/fit_repair.py` (CRC-16 + trim progresivo) |
 | Geocoding | `services/geocoding.py` (Nominatim OSM, 1 req/s, caché ~1km) |
+| Strava | `services/strava_service.py` (OAuth2, streams, conversión → ParsedFit) |
 | BD | PostgreSQL 16 + PostGIS (`postgis/postgis:16-3.4`) |
 | Frontend | React 18 + Vite + TypeScript + Tailwind + Chart.js + Leaflet + TanStack Query + Zustand |
 | Infra dev | Docker Compose (`db`, `api`, `web`, `adminer`, `mailpit`) |
@@ -30,6 +31,7 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 - Auth: **`fastapi-users`**, no JWT manual
 - Import masivo: **CLI** (`apps/api/bulk_import.py`), no UI
 - Multi-usuario desde el inicio: `user_id FK` en `activities`
+- Datetimes en BD como **TIMESTAMP naive UTC** (sin tzinfo) — Strava devuelve ISO con Z, convertir con `_naive_utc()`
 - **Una fase no se da por completada hasta que todos los tests pasen al 100%**
 
 ---
@@ -45,112 +47,82 @@ Ficheros fuente: `/workspace/xabi/Activities/` (118 ficheros, 114 `.fit`) → mo
 - Extensiones (`uuid-ossp`, `postgis`, `citext`) se crean en la primera migración
 - **Tests usan `NullPool`** — sin reutilización de conexiones entre tests
 - **`ST_X`/`ST_Y` no funcionan sobre `geography`** — usar `ST_AsGeoJSON` + `json.loads()`
-- **Timestamps duplicados en records Garmin** — deduplicar por `ts` antes de insertar (ya corregido)
+- **Timestamps duplicados en records Garmin** — deduplicar por `ts` antes de insertar
 - **Mock de email**: `patch("fitapp.auth.users.send_verification_email")`
 - **Mock de geocoding**: `patch("fitapp.services.activity_service.generate_activity_name")`
-- **Mock de background task enrich**: `patch("fitapp.routers.activities._enrich_name_bg")` — parchear donde se USA (el router), no donde está definida
+- **Mock de background task enrich**: `patch("fitapp.routers.activities._enrich_name_bg")` — parchear donde se USA
 - Puerto 1025 del host ocupado → Mailpit usa `1026:1025`
-- **`httpx-oauth` no persiste tras rebuild** — está en `pyproject.toml` pero Docker cachea la capa y no lo reinstala; hacer `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"` tras cada rebuild
-- **FK `oauth_account.user_id` → `"users.id"`** — fastapi-users genera por defecto FK a `"user.id"`; hay que sobreescribir con `@declared_attr` porque nuestro `__tablename__ = "users"`
-- **`on_after_register` con OAuth**: guardar `if not user.is_verified:` antes de llamar `request_verify()` — los usuarios OAuth llegan con `is_verified=True` y fastapi-users lanza `UserAlreadyVerified` si se intenta verificarlos
-- **`get_access_token` hace HTTP real en tests** — parchear `google_oauth_client.get_access_token` con `AsyncMock` en todos los tests de callback, no solo en los del flujo completo
-- **CSRF cookie cross-origin**: el fetch a `/auth/google/authorize` debe llevar `credentials: 'include'` o el navegador descarta la `Set-Cookie` y el callback falla con `OAUTH_CSRF_ERROR`
-- **`csrf_token_cookie_secure=False`** en `get_oauth_router()` — obligatorio en HTTP dev; sin ello la cookie no se envía en la petición de callback
-- **`User.oauth_accounts` necesita `cascade="all, delete-orphan"`** — sin esto SQLAlchemy intenta `UPDATE oauth_account SET user_id=NULL` (NOT NULL) al borrar el usuario → `IntegrityError`; el `ON DELETE CASCADE` de BD solo funciona si el ORM no intenta NULL primero
-- **`/auth/google/authorize` sobreescrito en `google_callback.py`** — acepta `flow=login|register` y lo codifica en el state JWT; registrado ANTES del router fastapi-users para tomar precedencia
-- **`get_authorization_url` de httpx_oauth usa `scope=` no `scopes=`** — parámetro posicional distinto al nombre que usa fastapi-users internamente
-- **Registro multi-paso no usa `user_manager.create()`** — usa directamente `user_manager.user_db.create({...})` para evitar que `on_after_register` dispare el envío de email de verificación (el OTP ya verificó el email)
+- **`httpx-oauth` no persiste tras rebuild** — `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"` tras cada rebuild
+- **FK `oauth_account.user_id` → `"users.id"`** — sobreescribir con `@declared_attr`
+- **`on_after_register` con OAuth**: guardar `if not user.is_verified:` antes de llamar `request_verify()`
+- **`get_access_token` hace HTTP real en tests** — parchear `google_oauth_client.get_access_token` con `AsyncMock`
+- **CSRF cookie cross-origin**: fetch a `/auth/google/authorize` debe llevar `credentials: 'include'`
+- **`csrf_token_cookie_secure=False`** en `get_oauth_router()` — obligatorio en HTTP dev
+- **`User.oauth_accounts` necesita `cascade="all, delete-orphan"`** — sin esto SQLAlchemy intenta `UPDATE oauth_account SET user_id=NULL` (NOT NULL) al borrar el usuario
+- **`/auth/google/authorize` sobreescrito en `google_callback.py`** — registrado ANTES del router fastapi-users
+- **`get_authorization_url` de httpx_oauth usa `scope=` no `scopes=`**
+- **Registro multi-paso no usa `user_manager.create()`** — usa `user_manager.user_db.create({...})` para evitar envío de email de verificación
+- **Strava callback sin auth Bearer** — el user_id viaja en el state JWT firmado (`aud="strava-oauth"`)
+- **Strava datetimes tienen tzinfo** — siempre convertir con `_naive_utc()` antes de insertar en BD
+- **Strava rate limit 429** — 600 req/15min; el retry en `_get()` espera máx 15 s; importaciones grandes requieren ~1.2 s entre actividades
+- **uvicorn --reload espera BackgroundTasks** — si hay un import de Strava activo con sleeps, el reload queda bloqueado hasta que termine
+- **Nueva variable de entorno** — añadir siempre en `docker-compose.yml` (bloque `environment`) Y en `.env.example`
+- **`AsyncSessionLocal = SessionLocal`** alias en `db.py` — usado por background tasks (`_import_bg`, `_enrich_name_bg`)
 
 ---
 
-## Estado actual (2026-05-06) — Registro multi-paso + correcciones Google OAuth — 171 tests
+## Estado actual (2026-05-07) — 214 tests
 
 ### Fase 1 ✅ — Auth
 Register + verify email + login/logout + `/users/me`. Frontend: LoginPage, RegisterPage, VerifyPage, PrivateRoute, Layout, authStore (Zustand).
 
 ### Fase 2 ✅ — Parser FIT + Upload
-- `parse_fit()` + `parse_fit_safe()` + `fit_repair.py` (CRC-16 + trim)
-- `POST /activities/upload`: multipart, dedupe `(user_id, file_hash)`, 409/400
-- `GET /activities/`: lista autenticada
-- `bulk_import.py`: 114/114 importados
+`parse_fit()` + `parse_fit_safe()` + `fit_repair.py` (CRC-16 + trim). `POST /activities/upload`. `bulk_import.py`: 114/114 importados.
 
 ### Fase 3 ✅ — Listado frontend + nombres
-- `geocoding.py`: Nominatim, caché dict, rate-limit 1.1s
-- Columna `name` en `activities` (migración `6bf7f63a1065`)
-- `ActivitiesPage`: tabla, modal upload drag-and-drop, filas clicables
+`geocoding.py`: Nominatim, caché dict, rate-limit 1.1s. Columna `name` (migración `6bf7f63a1065`). ActivitiesPage.
 
 ### Fase 4 ✅ — Detalle de actividad
-- `GET /activities/{id}`: activity + records (via ST_AsGeoJSON) + laps
-- `ActivityDetailPage`: stats, mapa Leaflet, gráficas Chart.js sincronizadas, tabla vueltas
+`GET /activities/{id}`: activity + records + laps. ActivityDetailPage: stats, mapa Leaflet, gráficas Chart.js sincronizadas.
 
 ### Fase 5 ✅ — Dashboard estadísticas
-- `GET /stats/summary`: km, horas, actividades, desnivel totales
-- `GET /stats/calendar?year=YYYY`: datos heatmap por día
-- `GET /stats/timeline?bucket=month|year`: evolución mensual/anual
-- `StatsPage`: tarjetas, heatmap estilo GitHub, gráfica de barras mensual
+`/stats/summary+calendar+timeline`. StatsPage: tarjetas, heatmap GitHub-style, barras mensuales.
 
 ### Fase 6 ✅ — Filtros, edición, exportación
-- Filtros en `GET /activities/`: `q`, `sport`, `date_from`, `date_to`
-- `PATCH /activities/{id}`: edición parcial `name`/`sport`/`notes` (migración `472807ab1cee`)
-- `GET /activities/export/csv`: exporta lista filtrada
-- `GET /activities/{id}/export/gpx`: genera GPX 1.1 con extensiones Garmin
-- Frontend: FilterBar, botón CSV, EditModal, botón GPX
+Filtros + paginación en `GET /activities/`. `GET /activities/sports`. `PATCH /activities/{id}` (migración `472807ab1cee`). CSV + GPX. Frontend: FilterBar, Pagination, EditModal.
 
-### Fase 7 ✅ — Enriquecimiento asíncrono de nombres
-- `geocoding.py` mejorado: haversine bucle/p2p, start + end locality (zoom 13) + 5 waypoints (zoom 17, fracs 0.15/0.30/0.50/0.70/0.85), máx 3 POIs
-- `enrich_activity_name(db, id, force=False)`: carga records BD → geocoding → actualiza name
-- `_enrich_name_bg(id)`: tarea de fondo con sesión propia, encola tras cada upload
-- `persist_activity()`: ya no bloquea con geocoding; respuesta inmediata
-- `POST /activities/enrich-names`: encola todas las actividades con `name IS NULL` del usuario
-- `apps/api/enrich_names.py` (CLI): `python enrich_names.py --user-email EMAIL [--force]` o `--all-users`
+### Fase 7 ✅ — Enriquecimiento asíncrono
+BackgroundTasks geocoding post-upload. `POST /activities/enrich-names`. `enrich_names.py` CLI.
 
 ### Fase 8 ✅ — Gestión de cuenta
-- `PATCH /users/me/password`: cambio de contraseña (valida actual, mín 8 chars nueva)
-- `DELETE /users/me`: borrado de cuenta con `{ confirm: true }` (cascade activities + oauth_accounts)
-- `DELETE /activities/{id}`: borrado de actividad (404 si no existe, 403 si no es propietario, 204 OK)
-- Frontend: `AccountPage` (`/account`) con formulario de cambio de contraseña + zona de peligro (modal con "BORRAR")
-- Frontend: botón "Borrar" en `ActivityDetailPage` con modal de confirmación
-- Frontend: email del usuario en navbar como enlace a `/account`
-- Router `account.py` registrado antes del router fastapi-users para que `DELETE /users/me` no colisione con `DELETE /users/{id}`
+`PATCH /users/me/password`, `DELETE /users/me`, `DELETE /activities/{id}`. AccountPage con zona de peligro.
 
 ### Mejoras login ✅
-- **JWT_SECRET**: 256 bits (64 hex), generado con `openssl rand -hex 32`; lifetime 8 h (`JWT_LIFETIME_SECONDS=28800`)
-- **Paginación**: `GET /activities/` devuelve `{items, total, page, size, pages}`; `?page=1&size=20` (máx 100). `GET /activities/sports` para deportes distintos del usuario. Frontend: componente `Pagination` con prev/next y numeración.
-- **Recordarme (15 días)**: checkbox en LoginPage → llama a `/auth/jwt-remember/login`; segundo `AuthenticationBackend` (`jwt-remember`, 15 días)
-- **Login con Google OAuth2** (`flow=login`): botón en LoginPage → fetch `/auth/google/authorize?flow=login` → redirige a Google
-  - Si el perfil Google **no tiene cuenta** → redirige a `/login?google_error=…` (NO crea usuario desde login)
-  - Si el perfil Google **tiene cuenta** → genera JWT y redirige a `/auth/google/callback?access_token=…`
-  - `_GoogleOAuth2`: sobreescribe `get_id_email` para usar `/oauth2/v2/userinfo` en lugar de People API
-  - Tabla `oauth_account` (migración `5a37abab0ca1`); FK apunta a `"users.id"`
-  - `OAuthCallbackPage`: captura `?access_token=`, guarda en authStore, redirige a `/activities`
-  - Errores de red (`httpx.ReadTimeout`) capturados → redirige con `google_error` en lugar de 500
+JWT 256 bits / 8 h. Recordarme 15 días. Google OAuth2 (`flow=login|register`). OAuthCallbackPage. Paginación GET /activities/.
 
-### Registro multi-paso con OTP y Google ✅
-- **Flujo email** (3 pasos):
-  1. `POST /auth/register/send-otp`: envía código OTP de 6 dígitos por email; invalida el anterior
-  2. `POST /auth/register/verify-otp`: verifica el código → devuelve `verified_token` (JWT 30 min)
-  3. `POST /auth/register/complete`: crea cuenta con Nombre, Apellidos, Fecha nacimiento, Género y contraseña; `is_verified=True` de entrada (el OTP ya verificó el email); envía email de bienvenida
-- **Flujo Google** (`flow=register`): botón en RegisterPage → fetch `/auth/google/authorize?flow=register`
-  - Si el perfil Google **no tiene cuenta** → redirige a `/register?google_token=…` para completar registro
-  - `POST /auth/register/complete-google`: crea cuenta vinculando OAuth; nombre tomado de Google; `birth_date`/`gender` quedan `null`
-  - El frontend auto-completa al montar con el `google_token`; envía email de bienvenida
-- **Campos de perfil** en `User`: `first_name`, `last_name`, `birth_date` (date), `gender` (enum)
-- **Campanilla "Faltan datos"** en navbar cuando `birth_date` o `gender` son `null` → enlaza a `/account`
-- **Migración**: `159b99c22872` — tabla `email_otp` + columnas de perfil en `users` + enum `gender_enum`
-- **Modelo `EmailOTP`**: `email`, `code`, `expires_at`, `used`
-- **Servicio `otp.py`**: `create_otp`, `verify_otp`, `create_verified_token`, `decode_verified_token`, `create_google_registration_token`, `decode_google_registration_token`
+### Registro multi-paso ✅
+3 pasos OTP email: `send-otp` → `verify-otp` → `complete`. Google `flow=register` → `complete-google`. Campos perfil (`first_name`, `last_name`, `birth_date`, `gender`). Campanilla "Faltan datos". Migración `159b99c22872`.
 
-### Correcciones Google OAuth ✅
-- **Borrado usuario Google**: `User.oauth_accounts` con `cascade="all, delete-orphan"` — sin este flag SQLAlchemy intentaba `SET user_id=NULL` (NOT NULL) → `IntegrityError`
-- **Separación login/registro**: `/auth/google/authorize?flow=login|register` codifica el flujo en el state JWT; el callback actúa en consecuencia
-- **500 en callback**: `httpx.ReadTimeout` en `get_id_email` ahora capturado → redirect gracioso a `/login?google_error=…`
+### Correcciones OAuth ✅
+`cascade="all, delete-orphan"` en `User.oauth_accounts`. Separación login/registro. Manejo `ReadTimeout`.
+
+### Fase 9 ✅ — Calendario + Potencia + TSS/IF
+`services/power_estimation.py`. `normalized_power` en activities, `ftp`+`weight_kg` en users (migración `fa3c8e7b1d2a`). `GET /stats/calendar-detail`. `POST /stats/recalculate-np`. `PATCH /users/me/training`. CalendarPage.
+
+### Integración Strava ✅ — 214 tests
+- **Modelo**: `StravaToken` en `models/user.py` (migración `fb9a4f2c9133`)
+- **Servicio**: `services/strava_service.py` — OAuth2, retry 429 (máx 15 s), `strava_to_parsed()` → ParsedFit con datetimes naive, deduplicación `sha256("strava-{id}")`
+- **Router**: `routers/strava.py` — 5 endpoints; callback sin auth (state JWT con user_id); background task `_import_bg` con logging y manejo de errores
+- **Frontend**: `lib/strava.ts` + sección Strava en AccountPage (spinner polling 10 s, detecta fin por `last_import_at`)
+- **Config**: `STRAVA_CLIENT_ID/SECRET` en `docker-compose.yml` y `.env.example`
 
 ---
 
 ## Bugs conocidos / trabajo pendiente
-- Las 114 actividades importadas en bulk tienen `name IS NULL` → ejecutar `docker compose exec api python enrich_names.py --all-users` (tarda ~15-20 min por rate-limit Nominatim)
-- `httpx-oauth` requiere instalación manual tras cada rebuild del contenedor API: `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"` (la capa de imagen no lo instala por caché de Docker; está en `pyproject.toml` pero el build no lo detecta como cambio)
-- El borrado de cuenta desde `/account` no borra los `oauth_accounts` visibles en Adminer (se eliminan por cascade de BD, pero conviene verificar en producción)
+
+- **Strava: rate limit 429** — Strava permite 600 req/15 min. Si se excede, esperar ~15 min antes de reintentar la importación.
+- **114 actividades FIT con `name IS NULL`** → ejecutar `docker compose exec api python enrich_names.py --all-users`
+- **`httpx-oauth` requiere instalación manual** tras rebuild: `docker compose exec api uv pip install --python /opt/venv "httpx-oauth>=0.15"`
 
 ---
 
@@ -166,17 +138,19 @@ docker compose exec api pytest
 # Migraciones
 docker compose exec api alembic upgrade head
 docker compose exec api alembic revision --autogenerate -m "desc"
-# ⚠️ Revisar fichero generado: eliminar falsos positivos de índices GiST
+# ⚠️ Revisar fichero: eliminar drop_index de índices GiST (falsos positivos)
 
 # Rebuild completo (obligatorio si cambia pyproject.toml)
 docker compose down && docker volume rm fit-app_api_venv && docker compose up --build -d
+
+# Reiniciar api (nueva variable de entorno)
+docker compose up -d api
 
 # Importar .fit en bulk
 docker compose exec api python bulk_import.py --user-email EMAIL --path /activities
 
 # Enriquecer nombres (post-bulk-import)
 docker compose exec api python enrich_names.py --all-users
-docker compose exec api python enrich_names.py --user-email EMAIL --force
 ```
 
 ## URLs locales

@@ -10,6 +10,7 @@ from fitapp.auth.users import UserManager, current_active_user, get_user_manager
 from fitapp.db import get_session
 from fitapp.models.activity import Activity
 from fitapp.models.user import User
+from fitapp.schemas.user import UserRead
 
 router = APIRouter(prefix="/users", tags=["account"])
 
@@ -44,6 +45,41 @@ async def change_password(
     hashed = user_manager.password_helper.hash(body.new_password)
     await user_manager.user_db.update(user, {"hashed_password": hashed})
     return {"detail": "PASSWORD_CHANGED"}
+
+
+class TrainingProfile(BaseModel):
+    ftp: int | None = None
+    weight_kg: float | None = None
+
+    @field_validator("ftp")
+    @classmethod
+    def validate_ftp(cls, v: int | None) -> int | None:
+        if v is not None and not (50 <= v <= 600):
+            raise ValueError("El FTP debe estar entre 50 y 600 W")
+        return v
+
+    @field_validator("weight_kg")
+    @classmethod
+    def validate_weight(cls, v: float | None) -> float | None:
+        if v is not None and not (30.0 <= v <= 250.0):
+            raise ValueError("El peso debe estar entre 30 y 250 kg")
+        return v
+
+
+@router.patch("/me/training", response_model=UserRead, status_code=200)
+async def update_training_profile(
+    body: TrainingProfile,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_session),
+) -> User:
+    if body.ftp is not None:
+        user.ftp = body.ftp
+    if body.weight_kg is not None:
+        user.weight_kg = body.weight_kg  # type: ignore[assignment]
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 @router.delete("/me", status_code=204)

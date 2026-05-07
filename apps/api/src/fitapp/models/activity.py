@@ -49,6 +49,7 @@ class Activity(Base):
     max_hr: Mapped[int | None] = mapped_column(Integer)
     avg_cadence: Mapped[int | None] = mapped_column(Integer)
     avg_power: Mapped[int | None] = mapped_column(Integer)
+    normalized_power: Mapped[int | None] = mapped_column(Integer)
     calories: Mapped[int | None] = mapped_column(Integer)
 
     start_point = mapped_column(Geography(geometry_type="POINT", srid=4326, spatial_index=False))

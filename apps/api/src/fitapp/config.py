@@ -26,6 +26,8 @@ class Settings(BaseSettings):
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
+    strava_client_id: str = ""
+    strava_client_secret: str = ""
     api_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:5173"
 

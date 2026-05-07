@@ -181,8 +181,10 @@ GET /stats/timeline?bucket=month|year
 | **Mejoras login** | Recordarme (15 días), Google OAuth2 login con flow=login/register, OAuthCallbackPage | ✅ Completa |
 | **Registro multi-paso** | OTP email 3 pasos + Google auto-registro, campos perfil, campanilla "Faltan datos" | ✅ Completa |
 | **Correcciones OAuth** | Borrado usuario Google, separación login/registro, manejo ReadTimeout | ✅ Completa |
+| **Fase 9** | Calendario + potencia estimada + TSS/IF | ✅ Completa |
+| **Integración Strava** | OAuth2, import actividades, streams, deduplicación | ✅ Completa |
 
-**171 tests pasando.**
+**214 tests pasando.**
 
 ## 5. Flujo de datos principal
 

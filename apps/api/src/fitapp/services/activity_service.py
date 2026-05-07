@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fitapp.models.activity import Activity, Lap, Record
 from fitapp.services.fit_parser import ParsedFit
 from fitapp.services.geocoding import generate_activity_name
+from fitapp.services.power_estimation import build_power_series, compute_normalized_power
 
 
 async def persist_activity(
     db: AsyncSession,
     user_id: uuid.UUID,
     parsed: ParsedFit,
+    total_mass_kg: float = 85.0,
 ) -> tuple[Activity, bool]:
     """Persiste una actividad parseada. Devuelve (activity, is_duplicate).
 
@@ -31,6 +33,11 @@ async def persist_activity(
     existing = result.scalar_one_or_none()
     if existing:
         return existing, True
+
+    np_val: int | None = None
+    if parsed.records:
+        powers = build_power_series(parsed.records, total_mass_kg)
+        np_val = compute_normalized_power(powers)
 
     activity = Activity(
         user_id=user_id,
@@ -50,6 +57,7 @@ async def persist_activity(
         max_hr=parsed.max_hr,
         avg_cadence=parsed.avg_cadence,
         avg_power=parsed.avg_power,
+        normalized_power=np_val,
         calories=parsed.calories,
         start_point=parsed.start_point_wkt,
         bbox=parsed.bbox_wkt,
@@ -149,3 +157,60 @@ async def _enrich_name_bg(activity_id: uuid.UUID) -> None:
     from fitapp.db import SessionLocal
     async with SessionLocal() as db:
         await enrich_activity_name(db, activity_id)
+
+
+async def recalculate_np_for_user(
+    user_id: uuid.UUID,
+    total_mass_kg: float = 85.0,
+) -> int:
+    """Recalcula normalized_power para todas las actividades del usuario.
+
+    Lee los records de cada actividad desde BD y recomputa NP usando el modelo
+    físico o el medidor de potencia si existe. Devuelve el número de actividades
+    actualizadas.
+    """
+    from fitapp.db import SessionLocal
+
+    updated = 0
+    async with SessionLocal() as db:
+        result = await db.execute(select(Activity).where(Activity.user_id == user_id))
+        activities = result.scalars().all()
+
+        for act in activities:
+            rec_result = await db.execute(
+                select(
+                    Record.speed_mps,
+                    Record.altitude_m,
+                    Record.distance_m,
+                    Record.power,
+                )
+                .where(Record.activity_id == act.id)
+                .order_by(Record.ts)
+            )
+            rows = rec_result.all()
+            if not rows:
+                continue
+
+            records_list = [
+                {
+                    "speed_mps": row.speed_mps,
+                    "altitude_m": row.altitude_m,
+                    "distance_m": row.distance_m,
+                    "power": row.power,
+                }
+                for row in rows
+            ]
+            powers = build_power_series(records_list, total_mass_kg)
+            np_val = compute_normalized_power(powers)
+            if np_val != act.normalized_power:
+                act.normalized_power = np_val
+                db.add(act)
+                updated += 1
+
+        await db.commit()
+    return updated
+
+
+async def _recalculate_np_bg(user_id: uuid.UUID, total_mass_kg: float = 85.0) -> None:
+    """Tarea de fondo para recalcular NP. Llama a recalculate_np_for_user."""
+    await recalculate_np_for_user(user_id, total_mass_kg)

@@ -10,6 +10,8 @@ export interface UserRead {
   last_name: string | null;
   birth_date: string | null;
   gender: Gender | null;
+  ftp: number | null;
+  weight_kg: number | null;
 }
 
 export interface LoginResponse {
