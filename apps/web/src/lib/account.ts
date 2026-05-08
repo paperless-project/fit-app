@@ -11,6 +11,10 @@ export async function changePasswordApi(
   });
 }
 
+export async function deleteAllActivitiesApi(): Promise<void> {
+  await api<void>('/activities', { method: 'DELETE' });
+}
+
 export async function deleteAccountApi(): Promise<void> {
   await api<void>('/users/me', {
     method: 'DELETE',

@@ -19,6 +19,25 @@ SCOPE = "activity:read_all"
 STREAM_KEYS = "time,latlng,altitude,heartrate,cadence,watts,temp,distance,velocity_smooth"
 
 
+class StravaRateLimitError(Exception):
+    """HTTP 429 de Strava: límite de peticiones alcanzado."""
+
+    def __init__(self, retry_after: int, is_daily: bool) -> None:
+        self.retry_after = retry_after
+        self.is_daily = is_daily
+        super().__init__(f"rate_limited retry_after={retry_after}s daily={is_daily}")
+
+
+def _is_daily_limit(headers: Any, retry_after: int) -> bool:
+    """Detecta si el 429 es por límite diario en vez de ventana de 15 min."""
+    try:
+        usage = headers.get("X-RateLimit-Usage", "").split(",")
+        limit = headers.get("X-RateLimit-Limit", "600,30000").split(",")
+        return int(usage[1].strip()) >= int(limit[1].strip())
+    except (IndexError, ValueError, AttributeError):
+        return retry_after > 960  # heurística: >16 min → límite diario
+
+
 def get_authorization_url(state: str) -> str:
     redirect_uri = f"{settings.api_url}/strava/callback"
     return (
@@ -81,22 +100,13 @@ async def get_valid_access_token(db: Any, user_id: Any) -> str:
 
 
 async def _get(access_token: str, url: str, params: dict | None = None) -> httpx.Response:
-    """GET autenticado con un único reintento ante 429 (máx 15 s de espera)."""
-    import asyncio as _asyncio
-    import logging as _log
-
+    """GET autenticado. Lanza StravaRateLimitError en 429 para que el llamador gestione la espera."""
     headers = {"Authorization": f"Bearer {access_token}"}
-    for attempt in range(2):
-        async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-            r = await client.get(url, params=params)
-        if r.status_code == 429:
-            # Limitar la espera a 15 s para no bloquear el servidor indefinidamente
-            wait = min(int(r.headers.get("Retry-After", 15)), 15)
-            _log.getLogger(__name__).warning("Strava 429 — esperando %ds (intento %d)", wait, attempt + 1)
-            await _asyncio.sleep(wait)
-            continue
-        return r
-    r.raise_for_status()
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+        r = await client.get(url, params=params)
+    if r.status_code == 429:
+        retry_after = int(r.headers.get("Retry-After", 900))
+        raise StravaRateLimitError(retry_after, _is_daily_limit(r.headers, retry_after))
     return r
 
 
@@ -149,33 +159,24 @@ def _naive_utc(dt_str: str | None) -> datetime | None:
     return datetime.fromisoformat(dt_str.replace("Z", "+00:00")).replace(tzinfo=None)
 
 
-def strava_to_parsed(activity: dict, streams: dict, laps_data: list[dict]) -> ParsedFit:
-    strava_id = activity["id"]
-    started_at = _naive_utc(activity.get("start_date"))
+def build_bbox_wkt(latlng_stream: list) -> str | None:
+    """Construye un WKT POLYGON bounding box a partir de una lista de [lat, lon]."""
+    if not latlng_stream:
+        return None
+    lats = [p[0] for p in latlng_stream]
+    lons = [p[1] for p in latlng_stream]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    return (
+        f"POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},"
+        f"{max_lon} {max_lat},{min_lon} {max_lat},{min_lon} {min_lat}))"
+    )
 
-    # ── punto de inicio ──────────────────────────────────────────────────────
-    start_latlng = activity.get("start_latlng") or []
-    start_point_wkt = None
-    if len(start_latlng) == 2:
-        lat, lon = start_latlng
-        start_point_wkt = f"POINT({lon} {lat})"
 
-    # ── bounding box ─────────────────────────────────────────────────────────
-    bbox_wkt = None
-    latlng_stream: list = streams.get("latlng", [])
-    if latlng_stream:
-        lats = [p[0] for p in latlng_stream]
-        lons = [p[1] for p in latlng_stream]
-        min_lat, max_lat = min(lats), max(lats)
-        min_lon, max_lon = min(lons), max(lons)
-        bbox_wkt = (
-            f"POLYGON(({min_lon} {min_lat},{max_lon} {min_lat},"
-            f"{max_lon} {max_lat},{min_lon} {max_lat},{min_lon} {min_lat}))"
-        )
-
-    # ── records (serie temporal) ─────────────────────────────────────────────
-    records: list[dict] = []
+def parse_strava_records(started_at: "datetime | None", streams: dict) -> list[dict]:
+    """Extrae la serie temporal de un dict de streams Strava."""
     time_stream: list = streams.get("time", [])
+    latlng_stream: list = streams.get("latlng", [])
     dist_stream: list = streams.get("distance", [])
     spd_stream: list = streams.get("velocity_smooth", [])
     alt_stream: list = streams.get("altitude", [])
@@ -184,13 +185,12 @@ def strava_to_parsed(activity: dict, streams: dict, laps_data: list[dict]) -> Pa
     pwr_stream: list = streams.get("watts", [])
     temp_stream: list = streams.get("temp", [])
 
+    records: list[dict] = []
     for i, t in enumerate(time_stream):
         point = latlng_stream[i] if i < len(latlng_stream) else None
         lat = point[0] if point is not None else None
         lon = point[1] if point is not None else None
-
         ts = started_at + timedelta(seconds=t) if started_at is not None else None
-
         records.append({
             "ts": ts,
             "lat": lat,
@@ -203,8 +203,11 @@ def strava_to_parsed(activity: dict, streams: dict, laps_data: list[dict]) -> Pa
             "power": int(pwr_stream[i]) if i < len(pwr_stream) else None,
             "temperature": int(temp_stream[i]) if i < len(temp_stream) else None,
         })
+    return records
 
-    # ── laps ─────────────────────────────────────────────────────────────────
+
+def parse_strava_laps(laps_data: list[dict]) -> list[dict]:
+    """Convierte la lista de laps de Strava al formato interno."""
     laps: list[dict] = []
     for i, lap in enumerate(laps_data):
         st = _naive_utc(lap.get("start_date"))
@@ -217,11 +220,31 @@ def strava_to_parsed(activity: dict, streams: dict, laps_data: list[dict]) -> Pa
             "avg_hr": lap.get("average_heartrate"),
             "ascent_m": lap.get("total_elevation_gain"),
         })
+    return laps
+
+
+def strava_to_parsed(activity: dict, streams: dict, laps_data: list[dict]) -> ParsedFit:
+    strava_id = activity["id"]
+    started_at = _naive_utc(activity.get("start_date"))
+
+    # ── punto de inicio ──────────────────────────────────────────────────────
+    start_latlng = activity.get("start_latlng") or []
+    start_point_wkt = None
+    if len(start_latlng) == 2:
+        lat, lon = start_latlng
+        start_point_wkt = f"POINT({lon} {lat})"
+
+    # ── bounding box y records desde streams ────────────────────────────────
+    latlng_stream: list = streams.get("latlng", [])
+    bbox_wkt = build_bbox_wkt(latlng_stream)
+    records = parse_strava_records(started_at, streams)
+    laps = parse_strava_laps(laps_data)
 
     return ParsedFit(
         file_hash=strava_hash(strava_id),
         file_name=f"strava_{strava_id}.json",
         started_at=started_at,
+        name=activity.get("name") or None,
         sport=activity.get("sport_type") or activity.get("type"),
         duration_s=activity.get("elapsed_time"),
         moving_time_s=activity.get("moving_time"),

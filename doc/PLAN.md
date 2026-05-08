@@ -114,12 +114,38 @@ CREATE TABLE email_otp (
 CREATE INDEX ix_email_otp_email ON email_otp (email);
 ```
 
+**Campos adicionales en `activities`** (varias migraciones):
+```sql
+ALTER TABLE activities ADD COLUMN normalized_power integer;          -- fa3c8e7b1d2a
+ALTER TABLE activities ADD COLUMN streams_fetched  boolean NOT NULL DEFAULT true;  -- d1c777f08bfa
+```
+
+**Tabla `strava_tokens`** (migración `fb9a4f2c9133`):
+```sql
+CREATE TABLE strava_tokens (
+  id                    uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id               uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  access_token          text NOT NULL,
+  refresh_token         text NOT NULL,
+  expires_at            integer NOT NULL,
+  athlete_id            integer,
+  last_import_at        timestamp,
+  import_status         varchar(32),          -- running|fetching_streams|rate_limited|daily_limit|error|completed
+  import_status_message varchar(255),
+  UNIQUE (user_id)
+);
+```
+
 **Migraciones aplicadas:**
 - `379c3241c147` — initial_schema (tablas + extensiones + índices GiST)
 - `6bf7f63a1065` — add_activity_name
 - `472807ab1cee` — add_notes_to_activities
 - `5a37abab0ca1` — add_oauth_account_table (tabla OAuth para login con Google)
 - `159b99c22872` — add_email_otp_table_and_user_profile_fields (OTP + first_name/last_name/birth_date/gender)
+- `fa3c8e7b1d2a` — add_normalized_power_ftp_weight
+- `fb9a4f2c9133` — add_strava_tokens
+- `fa4b4510841b` — add_strava_import_status (import_status + import_status_message en strava_tokens)
+- `d1c777f08bfa` — add_streams_fetched_to_activities
 
 ## 3. API REST implementada
 
@@ -136,16 +162,17 @@ GET  /auth/google/authorize       ?flow=login|register  →  JSON {authorization
 GET  /auth/google/callback        valida CSRF + flow; login si existe, crea token reg. si flow=register, error si flow=login
 
 # Registro multi-paso (OTP + perfil)
-POST /auth/register/send-otp      {email} → envía código 6 dígitos; invalida el anterior
-POST /auth/register/verify-otp   {email, code} → {verified_token} (JWT 30 min)
-POST /auth/register/complete     {verified_token, first_name, last_name, birth_date, gender, password} → 201 usuario
-POST /auth/register/complete-google  {google_token} → 201 {access_token}; vincula OAuth, nombre de Google
+POST /auth/register/send-otp          {email} → envía código 6 dígitos; invalida el anterior
+POST /auth/register/verify-otp        {email, code} → {verified_token} (JWT 30 min)
+POST /auth/register/complete          {verified_token, first_name, last_name, birth_date, gender, password} → 201 usuario
+POST /auth/register/complete-google   {google_token} → 201 {access_token}; vincula OAuth, nombre de Google
 
 # Perfil de usuario
 GET|PATCH /users/me
 
 # Cuenta de usuario
 PATCH  /users/me/password         cambio de contraseña; 400 si actual errónea; 422 si nueva < 8 chars
+PATCH  /users/me/training         FTP y peso corporal
 DELETE /users/me                  borrado de cuenta con {confirm:true}; cascade activities + oauth_accounts
 
 # Actividades
@@ -156,13 +183,23 @@ POST   /activities/enrich-names   encola geocoding para actividades con name IS 
 GET    /activities/export/csv     CSV con mismos filtros (sin paginación, exporta todo)
 GET    /activities/{id}           detalle + records + laps
 PATCH  /activities/{id}           edición parcial: name, sport, notes
-DELETE /activities/{id}           borrado; 403 si no es propietario; 404 si no existe
+DELETE /activities                borrado de TODAS las actividades del usuario; 204
+DELETE /activities/{id}           borrado individual; 403 si no es propietario; 404 si no existe
 GET    /activities/{id}/export/gpx  GPX 1.1 con extensiones Garmin
 
 # Estadísticas
-GET /stats/summary
-GET /stats/calendar?year=YYYY
-GET /stats/timeline?bucket=month|year
+GET  /stats/summary
+GET  /stats/calendar?year=YYYY
+GET  /stats/timeline?bucket=month|year
+GET  /stats/calendar-detail       detalle semanal con TSS/IF/NP
+POST /stats/recalculate-np        recalcula NP para todas las actividades del usuario
+
+# Strava
+GET    /strava/authorize          devuelve {authorization_url}; state=JWT firmado con user_id
+GET    /strava/callback           OAuth2 callback (sin auth Bearer); intercambia code y guarda token
+GET    /strava/status             {connected, athlete_id, last_import_at, import_status, import_status_message}
+DELETE /strava/disconnect         borra StravaToken del usuario
+POST   /strava/import             inicia importación bifásica en background; 409 si ya hay import activo
 ```
 
 ## 4. Fases de desarrollo
@@ -182,9 +219,9 @@ GET /stats/timeline?bucket=month|year
 | **Registro multi-paso** | OTP email 3 pasos + Google auto-registro, campos perfil, campanilla "Faltan datos" | ✅ Completa |
 | **Correcciones OAuth** | Borrado usuario Google, separación login/registro, manejo ReadTimeout | ✅ Completa |
 | **Fase 9** | Calendario + potencia estimada + TSS/IF | ✅ Completa |
-| **Integración Strava** | OAuth2, import actividades, streams, deduplicación | ✅ Completa |
+| **Integración Strava** | OAuth2, import bifásico (summaries + streams GPS), deduplicación FIT+Strava, status en tiempo real | ✅ Completa |
 
-**214 tests pasando.**
+**218 tests pasando.**
 
 ## 5. Flujo de datos principal
 

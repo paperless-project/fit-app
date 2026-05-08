@@ -149,6 +149,87 @@ def test_strava_to_parsed_laps() -> None:
     assert parsed.laps[0]["duration_s"] == 1800
 
 
+# ── Tests de deduplicación ────────────────────────────────────────────────────
+
+async def test_cross_source_dedup_strava_after_fit(client: AsyncClient) -> None:
+    """Misma salida importada desde FIT y desde Strava → solo debe persistir una actividad."""
+    from fitapp.services.activity_service import persist_activity
+    from fitapp.services.fit_parser import ParsedFit
+    from fitapp.models.activity import Activity
+    from tests.conftest import _SessionFactory
+    from sqlalchemy import select
+    import uuid as _uuid
+    from datetime import datetime
+
+    headers = await _auth_headers(client)
+    me = await client.get("/users/me", headers=headers)
+    user_id = _uuid.UUID(me.json()["id"])
+
+    started_at = datetime(2024, 3, 15, 8, 0, 0)
+
+    fit_parsed = ParsedFit(
+        file_hash="fit_file_hash_abc123",
+        file_name="ride.fit",
+        started_at=started_at,
+        sport="Ride",
+        duration_s=3600,
+        moving_time_s=3500,
+        distance_m=40000.0,
+        ascent_m=500.0,
+        descent_m=None,
+        avg_speed_mps=11.1,
+        max_speed_mps=18.0,
+        avg_hr=145,
+        max_hr=170,
+        avg_cadence=88,
+        avg_power=220,
+        calories=900,
+        start_point_wkt=None,
+        bbox_wkt=None,
+        records=[],
+        laps=[],
+    )
+
+    strava_parsed = ParsedFit(
+        file_hash=strava_hash(999999),  # hash distinto al FIT
+        file_name="strava_999999.json",
+        started_at=started_at,  # mismo started_at
+        sport="Ride",
+        duration_s=3600,
+        moving_time_s=3500,
+        distance_m=40000.0,
+        ascent_m=500.0,
+        descent_m=None,
+        avg_speed_mps=11.1,
+        max_speed_mps=18.0,
+        avg_hr=145,
+        max_hr=170,
+        avg_cadence=88,
+        avg_power=220,
+        calories=900,
+        start_point_wkt=None,
+        bbox_wkt=None,
+        records=[],
+        laps=[],
+    )
+
+    async with _SessionFactory() as db:
+        activity_fit, is_dup = await persist_activity(db, user_id, fit_parsed)
+        assert is_dup is False
+
+    async with _SessionFactory() as db:
+        activity_strava, is_dup2 = await persist_activity(db, user_id, strava_parsed)
+        assert is_dup2 is True, "La actividad Strava debería detectarse como duplicada por started_at"
+        assert activity_strava.id == activity_fit.id
+
+    async with _SessionFactory() as db:
+        result = await db.execute(
+            select(Activity).where(Activity.user_id == user_id, Activity.started_at == started_at)
+        )
+        rows = result.scalars().all()
+        assert len(rows) == 1, f"Solo debe existir 1 actividad, encontradas: {len(rows)}"
+
+
 # ── Tests de endpoints ─────────────────────────────────────────────────────────
 
 async def test_strava_status_not_connected(client: AsyncClient) -> None:

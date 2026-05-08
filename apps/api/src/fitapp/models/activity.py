@@ -8,6 +8,7 @@ from decimal import Decimal
 from geoalchemy2 import Geography
 from sqlalchemy import (
     JSON,
+    Boolean,
     ForeignKey,
     Integer,
     Numeric,
@@ -56,6 +57,7 @@ class Activity(Base):
     bbox = mapped_column(Geography(geometry_type="POLYGON", srid=4326, spatial_index=False))
     summary: Mapped[dict | None] = mapped_column(JSONB)
 
+    streams_fetched: Mapped[bool] = mapped_column(default=True, server_default="true", nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
     records: Mapped[list[Record]] = relationship(

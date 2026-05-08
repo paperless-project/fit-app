@@ -228,6 +228,18 @@ async def get_activity_detail(
     )
 
 
+@router.delete("", status_code=204)
+async def delete_all_activities(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    result = await db.execute(select(Activity).where(Activity.user_id == user.id))
+    activities = result.scalars().all()
+    for activity in activities:
+        await db.delete(activity)
+    await db.commit()
+
+
 @router.delete("/{activity_id}", status_code=204)
 async def delete_activity(
     activity_id: uuid.UUID,

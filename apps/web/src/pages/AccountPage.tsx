@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { logoutApi } from '@/lib/auth';
-import { changePasswordApi, deleteAccountApi, updateTrainingProfileApi } from '@/lib/account';
+import { changePasswordApi, deleteAccountApi, deleteAllActivitiesApi, updateTrainingProfileApi } from '@/lib/account';
 import { ApiError } from '@/lib/api';
 import { connectStrava, disconnectStrava, getStravaStatus, startStravaImport } from '@/lib/strava';
 
@@ -104,6 +104,74 @@ function ChangePasswordSection() {
         </button>
       </form>
     </section>
+  );
+}
+
+// ── Modal de borrado de todas las actividades ─────────────────────────────────
+
+function DeleteAllActivitiesModal({ onClose }: { onClose: () => void }) {
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  async function handleDelete() {
+    if (input !== 'BORRAR') return;
+    setLoading(true);
+    setError(null);
+    try {
+      await deleteAllActivitiesApi();
+      await qc.invalidateQueries({ queryKey: ['activities'] });
+      onClose();
+    } catch {
+      setError('Error al borrar las actividades. Inténtalo de nuevo.');
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-red-700">Borrar todas las actividades</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600" aria-label="Cerrar">
+            ✕
+          </button>
+        </div>
+
+        <p className="mb-4 text-sm text-slate-600">
+          Esta acción es <strong>irreversible</strong>. Se eliminarán todas tus actividades,
+          incluyendo los datos GPS, potencia y estadísticas. Para confirmar, escribe{' '}
+          <strong>BORRAR</strong> en el campo de abajo.
+        </p>
+
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="BORRAR"
+          className="mb-4 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+        />
+
+        {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={input !== 'BORRAR' || loading}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {loading ? 'Borrando…' : 'Borrar todas las actividades'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -279,46 +347,43 @@ function TrainingProfileSection() {
 
 function StravaSection() {
   const qc = useQueryClient();
-  const [importAfter, setImportAfter] = useState('');
-  const [importBefore, setImportBefore] = useState('');
-  const [importing, setImporting] = useState(false);
-  const [lastImportAt, setLastImportAt] = useState<string | null>(null);
   const [connectError, setConnectError] = useState('');
+  const prevStatusRef = useRef<string | null>(null);
 
   const { data: status, isLoading } = useQuery({
     queryKey: ['strava-status'],
     queryFn: getStravaStatus,
-    // Mientras hay importación en curso, refresca cada 10 s para detectar el fin
-    refetchInterval: importing ? 10_000 : false,
+    refetchInterval: (query) => {
+      const s = query.state.data?.import_status;
+      return s === 'running' || s === 'rate_limited' || s === 'fetching_streams' ? 10_000 : false;
+    },
   });
 
-  // Detectar fin de importación comparando last_import_at
+  // Invalidar lista de actividades en transiciones relevantes
   useEffect(() => {
-    if (!importing) return;
-    if (status?.last_import_at && status.last_import_at !== lastImportAt) {
-      setImporting(false);
+    const prev = prevStatusRef.current;
+    const curr = status?.import_status ?? null;
+    const inProgress = (s: string | null) =>
+      s === 'running' || s === 'rate_limited' || s === 'fetching_streams';
+    // Al terminar fase 1 (running → fetching_streams): las actividades ya están visibles
+    if (prev === 'running' && curr === 'fetching_streams') {
       qc.invalidateQueries({ queryKey: ['activities'] });
     }
-  }, [status?.last_import_at, importing]);
+    // Al completar todo: invalidar de nuevo por si llegaron streams nuevos
+    if (inProgress(prev) && curr === 'completed') {
+      qc.invalidateQueries({ queryKey: ['activities'] });
+    }
+    prevStatusRef.current = curr;
+  }, [status?.import_status]);
+
+  const syncMutation = useMutation({
+    mutationFn: startStravaImport,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['strava-status'] }),
+  });
 
   const disconnectMutation = useMutation({
     mutationFn: disconnectStrava,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['strava-status'] });
-      setImporting(false);
-    },
-  });
-
-  const importMutation = useMutation({
-    mutationFn: () => {
-      const after = importAfter ? Math.floor(new Date(importAfter).getTime() / 1000) : undefined;
-      const before = importBefore ? Math.floor(new Date(importBefore).getTime() / 1000) : undefined;
-      return startStravaImport(after, before);
-    },
-    onSuccess: () => {
-      setLastImportAt(status?.last_import_at ?? null);
-      setImporting(true);
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['strava-status'] }),
   });
 
   async function handleConnect() {
@@ -331,6 +396,73 @@ function StravaSection() {
   }
 
   if (isLoading) return null;
+
+  const isRunning = status?.import_status === 'running';
+  const isRateLimited = status?.import_status === 'rate_limited';
+  const isFetchingStreams = status?.import_status === 'fetching_streams';
+  const isBlocked = isRunning || isRateLimited || isFetchingStreams;
+
+  function StatusBanner() {
+    if (!status?.import_status) return null;
+    switch (status.import_status) {
+      case 'running':
+        return (
+          <div className="flex items-center gap-2 rounded-md bg-orange-50 border border-orange-200 px-3 py-2 text-sm text-orange-700">
+            <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+            Descargando lista de actividades de Strava…
+          </div>
+        );
+      case 'fetching_streams':
+        return (
+          <div className="flex items-center gap-2 rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-700">
+            <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+            {status.import_status_message ?? 'Descargando datos GPS en segundo plano…'}
+          </div>
+        );
+      case 'rate_limited':
+        return (
+          <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+            <span className="font-medium">Pausa por límite de Strava</span>
+            <br />
+            {status.import_status_message}
+          </div>
+        );
+      case 'daily_limit':
+        return (
+          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+            <span className="font-medium">Límite diario alcanzado</span>
+            <br />
+            {status.import_status_message}
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+            <span className="font-medium">Error en la importación</span>
+            <br />
+            {status.import_status_message}
+          </div>
+        );
+      case 'completed':
+        return (
+          <p className="text-xs text-green-700">
+            Última sincronización: {status.last_import_at
+              ? new Date(status.last_import_at).toLocaleString('es-ES')
+              : '—'
+            }
+            {status.import_status_message && ` · ${status.import_status_message}`}
+          </p>
+        );
+      default:
+        return null;
+    }
+  }
 
   return (
     <section className="rounded-xl border border-orange-200 bg-white p-6 shadow-sm">
@@ -349,59 +481,23 @@ function StravaSection() {
               <span className="ml-1 text-slate-400">(ID atleta: {status.athlete_id})</span>
             )}
           </p>
-          {status.last_import_at && (
-            <p className="text-xs text-slate-400">
-              Última importación: {new Date(status.last_import_at).toLocaleString('es-ES')}
-            </p>
-          )}
 
-          <div className="space-y-3 max-w-sm">
-            <p className="text-sm font-medium text-slate-600">Importar actividades</p>
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="mb-1 block text-xs text-slate-500">Desde</label>
-                <input
-                  type="date"
-                  value={importAfter}
-                  onChange={(e) => setImportAfter(e.target.value)}
-                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="mb-1 block text-xs text-slate-500">Hasta</label>
-                <input
-                  type="date"
-                  value={importBefore}
-                  onChange={(e) => setImportBefore(e.target.value)}
-                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-                />
-              </div>
-            </div>
-            <p className="text-xs text-slate-400">
-              Deja vacío para importar todas las actividades disponibles.
-            </p>
-            <button
-              onClick={() => importMutation.mutate()}
-              disabled={importMutation.isPending || importing}
-              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
-            >
-              {importMutation.isPending || importing ? (
-                <span className="flex items-center gap-2">
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                  </svg>
-                  {importing ? 'Importando en segundo plano…' : 'Iniciando…'}
-                </span>
-              ) : 'Importar actividades'}
-            </button>
-            {importing && (
+          <div className="space-y-3">
+            <StatusBanner />
+            {!status.import_status && status.last_import_at && (
               <p className="text-xs text-slate-400">
-                La importación puede tardar varios minutos según el número de actividades. Esta página se actualizará cuando termine.
+                Última sincronización: {new Date(status.last_import_at).toLocaleString('es-ES')}
               </p>
             )}
-            {importMutation.isError && (
-              <p className="text-sm text-red-600">Error al iniciar la importación.</p>
+            <button
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending || isBlocked}
+              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+            >
+              {syncMutation.isPending ? 'Iniciando…' : 'Actualizar desde Strava'}
+            </button>
+            {syncMutation.isError && (
+              <p className="text-sm text-red-600">Error al iniciar la sincronización.</p>
             )}
           </div>
 
@@ -436,21 +532,41 @@ function StravaSection() {
 // ── Zona de peligro ───────────────────────────────────────────────────────────
 
 function DangerZone() {
-  const [showModal, setShowModal] = useState(false);
+  const [showDeleteActivities, setShowDeleteActivities] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
 
   return (
     <section className="rounded-xl border border-red-200 bg-white p-6 shadow-sm">
-      <h2 className="mb-1 text-base font-semibold text-red-700">Zona de peligro</h2>
-      <p className="mb-4 text-sm text-slate-500">
-        Borrar la cuenta elimina permanentemente todos tus datos y actividades.
-      </p>
-      <button
-        onClick={() => setShowModal(true)}
-        className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
-      >
-        Borrar cuenta
-      </button>
-      {showModal && <DeleteAccountModal onClose={() => setShowModal(false)} />}
+      <h2 className="mb-4 text-base font-semibold text-red-700">Zona de peligro</h2>
+
+      <div className="flex items-center justify-between border-b border-red-100 pb-4 mb-4">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Borrar todas las actividades</p>
+          <p className="text-xs text-slate-500">Elimina todos los registros GPS, potencia y estadísticas. La cuenta se conserva.</p>
+        </div>
+        <button
+          onClick={() => setShowDeleteActivities(true)}
+          className="ml-4 shrink-0 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+        >
+          Borrar actividades
+        </button>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Borrar cuenta</p>
+          <p className="text-xs text-slate-500">Elimina permanentemente tu cuenta y todas tus actividades.</p>
+        </div>
+        <button
+          onClick={() => setShowDeleteAccount(true)}
+          className="ml-4 shrink-0 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+        >
+          Borrar cuenta
+        </button>
+      </div>
+
+      {showDeleteActivities && <DeleteAllActivitiesModal onClose={() => setShowDeleteActivities(false)} />}
+      {showDeleteAccount && <DeleteAccountModal onClose={() => setShowDeleteAccount(false)} />}
     </section>
   );
 }

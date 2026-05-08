@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ async def persist_activity(
     user_id: uuid.UUID,
     parsed: ParsedFit,
     total_mass_kg: float = 85.0,
+    streams_fetched: bool = True,
 ) -> tuple[Activity, bool]:
     """Persiste una actividad parseada. Devuelve (activity, is_duplicate).
 
@@ -34,6 +36,22 @@ async def persist_activity(
     if existing:
         return existing, True
 
+    # Cross-source deduplication: Strava registra start_date con ~1s de diferencia
+    # respecto al fichero FIT del mismo dispositivo → usamos ventana de ±60 s
+    if parsed.started_at is not None:
+        dup_result = await db.execute(
+            select(Activity).where(
+                Activity.user_id == user_id,
+                Activity.started_at.between(
+                    parsed.started_at - timedelta(seconds=60),
+                    parsed.started_at + timedelta(seconds=60),
+                ),
+            )
+        )
+        existing_by_time = dup_result.scalar_one_or_none()
+        if existing_by_time:
+            return existing_by_time, True
+
     np_val: int | None = None
     if parsed.records:
         powers = build_power_series(parsed.records, total_mass_kg)
@@ -43,7 +61,7 @@ async def persist_activity(
         user_id=user_id,
         file_hash=parsed.file_hash,
         file_name=parsed.file_name,
-        name=None,  # se rellena mediante enrich_activity_name()
+        name=parsed.name,  # None para FIT (se enriquece por geocoding); valor real para Strava
         sport=parsed.sport,
         started_at=parsed.started_at,
         duration_s=parsed.duration_s,
@@ -61,6 +79,7 @@ async def persist_activity(
         calories=parsed.calories,
         start_point=parsed.start_point_wkt,
         bbox=parsed.bbox_wkt,
+        streams_fetched=streams_fetched,
     )
     db.add(activity)
     await db.flush()
@@ -214,3 +233,71 @@ async def recalculate_np_for_user(
 async def _recalculate_np_bg(user_id: uuid.UUID, total_mass_kg: float = 85.0) -> None:
     """Tarea de fondo para recalcular NP. Llama a recalculate_np_for_user."""
     await recalculate_np_for_user(user_id, total_mass_kg)
+
+
+async def enrich_activity_with_streams(
+    db: AsyncSession,
+    activity: Activity,
+    streams: dict,
+    laps_data: list[dict],
+    total_mass_kg: float = 85.0,
+) -> None:
+    """Añade records y laps a una actividad Strava que fue importada sin streams (fase 1).
+
+    Actualiza también start_point, bbox, avg_hr, max_hr, avg_cadence, avg_power,
+    normalized_power y marca streams_fetched=True.
+    """
+    from fitapp.services.strava_service import parse_strava_records, parse_strava_laps, build_bbox_wkt
+
+    records_data = parse_strava_records(activity.started_at, streams)
+    laps_list = parse_strava_laps(laps_data)
+
+    if records_data:
+        seen_ts: set = set()
+        for r in records_data:
+            if r["ts"] not in seen_ts:
+                seen_ts.add(r["ts"])
+                db.add(Record(
+                    activity_id=activity.id,
+                    ts=r["ts"],
+                    position=f"POINT({r['lon']} {r['lat']})" if r["lat"] is not None else None,
+                    altitude_m=r.get("altitude_m"),
+                    distance_m=r.get("distance_m"),
+                    speed_mps=r.get("speed_mps"),
+                    heart_rate=r.get("heart_rate"),
+                    cadence=r.get("cadence"),
+                    power=r.get("power"),
+                    temperature=r.get("temperature"),
+                ))
+
+        latlng_stream = streams.get("latlng", [])
+        bbox_wkt = build_bbox_wkt(latlng_stream)
+        if bbox_wkt:
+            activity.bbox = bbox_wkt
+
+        start_latlng = latlng_stream[0] if latlng_stream else None
+        if start_latlng and activity.start_point is None:
+            activity.start_point = f"POINT({start_latlng[1]} {start_latlng[0]})"
+
+        powers = build_power_series(records_data, total_mass_kg)
+        np_val = compute_normalized_power(powers)
+        if np_val:
+            activity.normalized_power = np_val
+
+    if laps_list:
+        db.add_all([
+            Lap(
+                activity_id=activity.id,
+                lap_index=lap["lap_index"],
+                start_time=lap["start_time"],
+                duration_s=lap.get("duration_s"),
+                distance_m=lap.get("distance_m"),
+                avg_speed_mps=lap.get("avg_speed_mps"),
+                avg_hr=lap.get("avg_hr"),
+                ascent_m=lap.get("ascent_m"),
+            )
+            for lap in laps_list
+        ])
+
+    activity.streams_fetched = True
+    await db.commit()

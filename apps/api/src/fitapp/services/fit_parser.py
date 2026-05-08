@@ -28,6 +28,7 @@ class ParsedFit:
     file_hash: str
     file_name: str
     started_at: datetime | None = None
+    name: str | None = None
     sport: str | None = None
     duration_s: int | None = None
     moving_time_s: int | None = None

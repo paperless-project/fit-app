@@ -61,3 +61,5 @@ class StravaToken(Base):
     expires_at: Mapped[int] = mapped_column(BigInteger, nullable=False)  # epoch Unix
     athlete_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_import_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+    import_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    import_status_message: Mapped[str | None] = mapped_column(String(255), nullable=True)

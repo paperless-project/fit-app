@@ -66,13 +66,13 @@ docker compose exec api python enrich_names.py --user-email tu@email.com
 ### Desde Strava
 1. Configura `STRAVA_CLIENT_ID` y `STRAVA_CLIENT_SECRET` en `.env` y reinicia: `docker compose up -d api`
 2. En la UI: **Mi cuenta → Strava → Conectar con Strava**
-3. Pulsa **Importar actividades** (opcionalmente filtra por rango de fechas)
+3. Pulsa **Actualizar desde Strava** — las actividades aparecen al instante (fase 1: summaries); los datos GPS se descargan en segundo plano (fase 2: streams)
 
 ## Tests
 
 ```bash
 docker compose exec api pytest
-# → 214 tests pasando (22 ficheros)
+# → 218 tests pasando (22 ficheros)
 ```
 
 ## Desarrollo
@@ -111,8 +111,8 @@ fit-app/
 │   │   ├── models/              activity.py (Activity, Record, Lap)
 │   │   │                        user.py (User, OAuthAccount, StravaToken)
 │   │   └── schemas/             activity, stats, user, register
-│   ├── alembic/versions/        7 migraciones Alembic
-│   ├── tests/                   214 tests (22 ficheros)
+│   ├── alembic/versions/        9 migraciones Alembic
+│   ├── tests/                   218 tests (22 ficheros)
 │   ├── bulk_import.py           CLI importación masiva de .fit
 │   └── enrich_names.py          CLI geocoding inverso de nombres
 └── apps/web/                    Frontend React + Vite
@@ -131,7 +131,7 @@ fit-app/
 - **Recordarme**: sesión de 15 días
 - **Perfil incompleto**: campanilla en navbar cuando faltan `birth_date` o `gender`
 - **Upload FIT**: drag-and-drop, deduplicación por hash, reparación automática de CRC
-- **Importación Strava**: OAuth2, import paginado de actividades con streams GPS/HR/cadencia/potencia, deduplicación por ID Strava
+- **Importación Strava**: OAuth2, import bifásico — fase 1 summaries (instantánea), fase 2 streams GPS/HR/cadencia/potencia en background; deduplicación por ID Strava y por ventana ±60 s vs FIT
 - **Listado**: paginado (20/página), filtros por nombre/deporte/fecha, exportar CSV
 - **Detalle**: mapa Leaflet + gráficas sincronizadas (altitud, velocidad, FC, cadencia, potencia), tabla de vueltas, exportar GPX
 - **Edición**: nombre, deporte, notas; borrado individual con confirmación
@@ -142,6 +142,6 @@ fit-app/
 - **Estadísticas**: totales (km/h/actividades/desnivel), heatmap GitHub-style, evolución mensual/anual
 - **Calendario** (`/calendar`): cuadrícula de semanas con TSS/IF/distancia/tiempo/calorías por semana
 - **Perfil de entrenamiento**: FTP y peso corporal; botón "Recalcular NP" para actividades históricas
-- **Gestión de cuenta**: cambio de contraseña, desconectar Strava, borrado de cuenta con cascada
+- **Gestión de cuenta**: cambio de contraseña, perfil de entrenamiento (FTP/peso), desconectar Strava, borrar todas las actividades, borrar cuenta con cascada
 
 Contexto técnico completo en [`CLAUDE.md`](CLAUDE.md) y [`doc/PLAN.md`](doc/PLAN.md).

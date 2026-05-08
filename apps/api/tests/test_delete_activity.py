@@ -68,3 +68,43 @@ async def test_delete_activity_not_found(client: AsyncClient) -> None:
 async def test_delete_activity_requires_auth(client: AsyncClient) -> None:
     res = await client.delete(f"/activities/{uuid.uuid4()}")
     assert res.status_code == 401
+
+
+async def test_delete_all_activities(client: AsyncClient) -> None:
+    await register_user(client)
+    token = await login_user(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    await _upload(client, token)
+
+    res = await client.get("/activities/", headers=headers)
+    assert res.json()["total"] >= 1
+
+    res = await client.delete("/activities", headers=headers)
+    assert res.status_code == 204
+
+    res = await client.get("/activities/", headers=headers)
+    assert res.json()["total"] == 0
+
+
+async def test_delete_all_activities_requires_auth(client: AsyncClient) -> None:
+    res = await client.delete("/activities")
+    assert res.status_code == 401
+
+
+async def test_delete_all_activities_only_own(client: AsyncClient) -> None:
+    """Borrar todas las actividades de un usuario no afecta a otros usuarios."""
+    await register_user(client, "owner@example.com")
+    await register_user(client, "other@example.com")
+    t_owner = await login_user(client, "owner@example.com")
+    t_other = await login_user(client, "other@example.com")
+
+    activity_other = await _upload(client, t_other)
+
+    await client.delete("/activities", headers={"Authorization": f"Bearer {t_owner}"})
+
+    res = await client.get(
+        f"/activities/{activity_other['id']}",
+        headers={"Authorization": f"Bearer {t_other}"},
+    )
+    assert res.status_code == 200
